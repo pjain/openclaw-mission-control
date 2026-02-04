@@ -7,6 +7,7 @@ from app.core.auth import AuthContext
 from app.core.config import settings
 from app.integrations.openclaw_gateway import (
     OpenClawGatewayError,
+    ensure_session,
     get_chat_history,
     openclaw_call,
     send_message,
@@ -24,11 +25,24 @@ async def gateway_status(auth: AuthContext = Depends(require_admin_auth)) -> dic
             sessions_list = list(sessions.get("sessions") or [])
         else:
             sessions_list = list(sessions or [])
+        main_session = settings.openclaw_main_session_key
+        main_session_entry: object | None = None
+        main_session_error: str | None = None
+        if main_session:
+            try:
+                ensured = await ensure_session(main_session, label="Main Agent")
+                if isinstance(ensured, dict):
+                    main_session_entry = ensured.get("entry") or ensured
+            except OpenClawGatewayError as exc:
+                main_session_error = str(exc)
         return {
             "connected": True,
             "gateway_url": gateway_url,
             "sessions_count": len(sessions_list),
             "sessions": sessions_list,
+            "main_session_key": main_session,
+            "main_session": main_session_entry,
+            "main_session_error": main_session_error,
         }
     except OpenClawGatewayError as exc:
         return {
@@ -45,8 +59,21 @@ async def list_sessions(auth: AuthContext = Depends(require_admin_auth)) -> dict
     except OpenClawGatewayError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     if isinstance(sessions, dict):
-        return {"sessions": list(sessions.get("sessions") or [])}
-    return {"sessions": list(sessions or [])}
+        sessions_list = list(sessions.get("sessions") or [])
+    else:
+        sessions_list = list(sessions or [])
+
+    main_session = settings.openclaw_main_session_key
+    main_session_entry: object | None = None
+    if main_session:
+        try:
+            ensured = await ensure_session(main_session, label="Main Agent")
+            if isinstance(ensured, dict):
+                main_session_entry = ensured.get("entry") or ensured
+        except OpenClawGatewayError:
+            main_session_entry = None
+
+    return {"sessions": sessions_list, "main_session_key": main_session, "main_session": main_session_entry}
 
 
 @router.get("/sessions/{session_id}")
@@ -61,7 +88,27 @@ async def get_session(
         sessions_list = list(sessions.get("sessions") or [])
     else:
         sessions_list = list(sessions or [])
+    main_session = settings.openclaw_main_session_key
+    if main_session and not any(
+        session.get("key") == main_session for session in sessions_list
+    ):
+        try:
+            await ensure_session(main_session, label="Main Agent")
+            refreshed = await openclaw_call("sessions.list")
+            if isinstance(refreshed, dict):
+                sessions_list = list(refreshed.get("sessions") or [])
+            else:
+                sessions_list = list(refreshed or [])
+        except OpenClawGatewayError:
+            pass
     session = next((item for item in sessions_list if item.get("key") == session_id), None)
+    if session is None and main_session and session_id == main_session:
+        try:
+            ensured = await ensure_session(main_session, label="Main Agent")
+            if isinstance(ensured, dict):
+                session = ensured.get("entry") or ensured
+        except OpenClawGatewayError:
+            session = None
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return {"session": session}
@@ -92,6 +139,9 @@ async def send_session_message(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="content is required"
         )
     try:
+        main_session = settings.openclaw_main_session_key
+        if main_session and session_id == main_session:
+            await ensure_session(main_session, label="Main Agent")
         await send_message(content, session_key=session_id)
     except OpenClawGatewayError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

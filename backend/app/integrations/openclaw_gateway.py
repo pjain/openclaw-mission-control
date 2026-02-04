@@ -126,3 +126,14 @@ async def get_chat_history(session_key: str, limit: int | None = None) -> Any:
     if limit is not None:
         params["limit"] = limit
     return await openclaw_call("chat.history", params)
+
+
+async def delete_session(session_key: str) -> Any:
+    return await openclaw_call("sessions.delete", {"key": session_key})
+
+
+async def ensure_session(session_key: str, label: str | None = None) -> Any:
+    params: dict[str, Any] = {"key": session_key}
+    if label:
+        params["label"] = label
+    return await openclaw_call("sessions.patch", params)

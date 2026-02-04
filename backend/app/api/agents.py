@@ -5,13 +5,22 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
+from sqlalchemy import update
 
-from app.api.deps import require_admin_auth
+from app.api.deps import ActorContext, require_admin_auth, require_admin_or_agent
+from app.core.agent_tokens import generate_agent_token, hash_agent_token
 from app.core.auth import AuthContext
+from app.core.config import settings
 from app.db.session import get_session
-from app.integrations.openclaw_gateway import OpenClawGatewayError, openclaw_call
+from app.integrations.openclaw_gateway import (
+    OpenClawGatewayError,
+    delete_session,
+    ensure_session,
+    send_message,
+)
 from app.models.agents import Agent
+from app.models.activity_events import ActivityEvent
 from app.schemas.agents import (
     AgentCreate,
     AgentHeartbeat,
@@ -40,7 +49,7 @@ def _build_session_key(agent_name: str) -> str:
 async def _ensure_gateway_session(agent_name: str) -> tuple[str, str | None]:
     session_key = _build_session_key(agent_name)
     try:
-        await openclaw_call("sessions.patch", {"key": session_key, "label": agent_name})
+        await ensure_session(session_key, label=agent_name)
         return session_key, None
     except OpenClawGatewayError as exc:
         return session_key, str(exc)
@@ -87,6 +96,8 @@ async def create_agent(
     auth: AuthContext = Depends(require_admin_auth),
 ) -> Agent:
     agent = Agent.model_validate(payload)
+    raw_token = generate_agent_token()
+    agent.agent_token_hash = hash_agent_token(raw_token)
     session_key, session_error = await _ensure_gateway_session(agent.name)
     agent.openclaw_session_id = session_key
     session.add(agent)
@@ -108,7 +119,7 @@ async def create_agent(
         )
     session.commit()
     try:
-        await send_provisioning_message(agent)
+        await send_provisioning_message(agent, raw_token)
     except OpenClawGatewayError as exc:
         _record_provisioning_failure(session, agent, str(exc))
         session.commit()
@@ -155,11 +166,13 @@ def heartbeat_agent(
     agent_id: str,
     payload: AgentHeartbeat,
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> Agent:
     agent = session.get(Agent, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if actor.actor_type == "agent" and actor.agent and actor.agent.id != agent.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     if payload.status:
         agent.status = payload.status
     agent.last_seen_at = datetime.utcnow()
@@ -175,11 +188,15 @@ def heartbeat_agent(
 async def heartbeat_or_create_agent(
     payload: AgentHeartbeatCreate,
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> Agent:
     agent = session.exec(select(Agent).where(Agent.name == payload.name)).first()
     if agent is None:
+        if actor.actor_type == "agent":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         agent = Agent(name=payload.name, status=payload.status or "online")
+        raw_token = generate_agent_token()
+        agent.agent_token_hash = hash_agent_token(raw_token)
         session_key, session_error = await _ensure_gateway_session(agent.name)
         agent.openclaw_session_id = session_key
         session.add(agent)
@@ -201,7 +218,23 @@ async def heartbeat_or_create_agent(
             )
         session.commit()
         try:
-            await send_provisioning_message(agent)
+            await send_provisioning_message(agent, raw_token)
+        except OpenClawGatewayError as exc:
+            _record_provisioning_failure(session, agent, str(exc))
+            session.commit()
+        except Exception as exc:  # pragma: no cover - unexpected provisioning errors
+            _record_provisioning_failure(session, agent, str(exc))
+            session.commit()
+    elif actor.actor_type == "agent" and actor.agent and actor.agent.id != agent.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    elif agent.agent_token_hash is None and actor.actor_type == "user":
+        raw_token = generate_agent_token()
+        agent.agent_token_hash = hash_agent_token(raw_token)
+        session.add(agent)
+        session.commit()
+        session.refresh(agent)
+        try:
+            await send_provisioning_message(agent, raw_token)
         except OpenClawGatewayError as exc:
             _record_provisioning_failure(session, agent, str(exc))
             session.commit()
@@ -226,14 +259,6 @@ async def heartbeat_or_create_agent(
                 agent_id=agent.id,
             )
         session.commit()
-        try:
-            await send_provisioning_message(agent)
-        except OpenClawGatewayError as exc:
-            _record_provisioning_failure(session, agent, str(exc))
-            session.commit()
-        except Exception as exc:  # pragma: no cover - unexpected provisioning errors
-            _record_provisioning_failure(session, agent, str(exc))
-            session.commit()
     if payload.status:
         agent.status = payload.status
     agent.last_seen_at = datetime.utcnow()
@@ -253,6 +278,41 @@ def delete_agent(
 ) -> dict[str, bool]:
     agent = session.get(Agent, agent_id)
     if agent:
+        async def _gateway_cleanup() -> None:
+            if agent.openclaw_session_id:
+                await delete_session(agent.openclaw_session_id)
+            main_session = settings.openclaw_main_session_key
+            if main_session:
+                workspace_root = settings.openclaw_workspace_root or "~/.openclaw/workspaces"
+                workspace_path = f"{workspace_root.rstrip('/')}/{_slugify(agent.name)}"
+                cleanup_message = (
+                    "Cleanup request for deleted agent.\n\n"
+                    f"Agent name: {agent.name}\n"
+                    f"Agent id: {agent.id}\n"
+                    f"Session key: {agent.openclaw_session_id or _build_session_key(agent.name)}\n"
+                    f"Workspace path: {workspace_path}\n\n"
+                    "Actions:\n"
+                    "1) Remove the workspace directory.\n"
+                    "2) Delete any lingering session artifacts.\n"
+                    "Reply NO_REPLY."
+                )
+                await ensure_session(main_session, label="Main Agent")
+                await send_message(cleanup_message, session_key=main_session, deliver=False)
+
+        try:
+            import asyncio
+
+            asyncio.run(_gateway_cleanup())
+        except OpenClawGatewayError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Gateway cleanup failed: {exc}",
+            ) from exc
+        session.execute(
+            update(ActivityEvent)
+            .where(col(ActivityEvent.agent_id) == agent.id)
+            .values(agent_id=None)
+        )
         session.delete(agent)
         session.commit()
     return {"ok": True}

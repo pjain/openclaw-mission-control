@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.api.deps import get_board_or_404, get_task_or_404, require_admin_auth
+from app.api.deps import (
+    ActorContext,
+    get_board_or_404,
+    get_task_or_404,
+    require_admin_auth,
+    require_admin_or_agent,
+)
 from app.core.auth import AuthContext
 from app.db.session import get_session
 from app.models.boards import Board
@@ -20,7 +26,7 @@ router = APIRouter(prefix="/boards/{board_id}/tasks", tags=["tasks"])
 def list_tasks(
     board: Board = Depends(get_board_or_404),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> list[Task]:
     return list(session.exec(select(Task).where(Task.board_id == board.id)))
 
@@ -55,10 +61,14 @@ def update_task(
     payload: TaskUpdate,
     task: Task = Depends(get_task_or_404),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> Task:
     previous_status = task.status
     updates = payload.model_dump(exclude_unset=True)
+    if actor.actor_type == "agent":
+        allowed_fields = {"status"}
+        if not set(updates).issubset(allowed_fields):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     for key, value in updates.items():
         setattr(task, key, value)
     task.updated_at = datetime.utcnow()
@@ -73,7 +83,13 @@ def update_task(
     else:
         event_type = "task.updated"
         message = f"Task updated: {task.title}."
-    record_activity(session, event_type=event_type, task_id=task.id, message=message)
+    record_activity(
+        session,
+        event_type=event_type,
+        task_id=task.id,
+        message=message,
+        agent_id=actor.agent.id if actor.actor_type == "agent" and actor.agent else None,
+    )
     session.commit()
     return task
 

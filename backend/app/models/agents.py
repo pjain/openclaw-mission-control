@@ -13,6 +13,7 @@ class Agent(SQLModel, table=True):
     name: str = Field(index=True)
     status: str = Field(default="online", index=True)
     openclaw_session_id: str | None = Field(default=None, index=True)
+    agent_token_hash: str | None = Field(default=None, index=True)
     last_seen_at: datetime = Field(default_factory=datetime.utcnow)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

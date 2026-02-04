@@ -3,7 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from app.api.deps import get_board_or_404, require_admin_auth
+from app.api.deps import (
+    ActorContext,
+    get_board_or_404,
+    require_admin_auth,
+    require_admin_or_agent,
+)
 from app.core.auth import AuthContext
 from app.db.session import get_session
 from app.models.boards import Board
@@ -15,7 +20,7 @@ router = APIRouter(prefix="/boards", tags=["boards"])
 @router.get("", response_model=list[BoardRead])
 def list_boards(
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> list[Board]:
     return list(session.exec(select(Board)))
 
@@ -36,7 +41,7 @@ def create_board(
 @router.get("/{board_id}", response_model=BoardRead)
 def get_board(
     board: Board = Depends(get_board_or_404),
-    auth: AuthContext = Depends(require_admin_auth),
+    actor: ActorContext = Depends(require_admin_or_agent),
 ) -> Board:
     return board
 

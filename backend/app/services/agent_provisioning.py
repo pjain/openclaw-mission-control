@@ -7,7 +7,7 @@ from uuid import uuid4
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.core.config import settings
-from app.integrations.openclaw_gateway import send_message
+from app.integrations.openclaw_gateway import ensure_session, send_message
 from app.models.agents import Agent
 
 TEMPLATE_FILES = [
@@ -68,12 +68,11 @@ def _workspace_path(agent_name: str) -> str:
     return f"{root}/{_slugify(agent_name)}"
 
 
-def build_provisioning_message(agent: Agent) -> str:
+def build_provisioning_message(agent: Agent, auth_token: str) -> str:
     agent_id = str(agent.id)
     workspace_path = _workspace_path(agent.name)
     session_key = agent.openclaw_session_id or ""
     base_url = settings.base_url or "REPLACE_WITH_BASE_URL"
-    auth_token = "REPLACE_WITH_AUTH_TOKEN"
 
     context = {
         "agent_name": agent.name,
@@ -114,9 +113,10 @@ def build_provisioning_message(agent: Agent) -> str:
     )
 
 
-async def send_provisioning_message(agent: Agent) -> None:
+async def send_provisioning_message(agent: Agent, auth_token: str) -> None:
     main_session = settings.openclaw_main_session_key
     if not main_session:
         return
-    message = build_provisioning_message(agent)
+    await ensure_session(main_session, label="Main Agent")
+    message = build_provisioning_message(agent, auth_token)
     await send_message(message, session_key=main_session, deliver=False)

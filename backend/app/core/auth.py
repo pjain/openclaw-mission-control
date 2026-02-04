@@ -95,3 +95,46 @@ async def get_auth_context(
         actor_type="user",
         user=user,
     )
+
+
+async def get_auth_context_optional(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    session: Session = Depends(get_session),
+) -> AuthContext | None:
+    if credentials is None:
+        return None
+
+    try:
+        guard = _build_clerk_http_bearer(auto_error=False)
+        clerk_credentials = await guard(request)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR) from exc
+    except HTTPException as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED) from exc
+
+    auth_data = _resolve_clerk_auth(request, clerk_credentials)
+    try:
+        clerk_user_id = _parse_subject(auth_data)
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED) from exc
+
+    if not clerk_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    user = session.exec(select(User).where(User.clerk_user_id == clerk_user_id)).first()
+    if user is None:
+        claims = auth_data.decoded if auth_data and auth_data.decoded else {}
+        user = User(
+            clerk_user_id=clerk_user_id,
+            email=claims.get("email"),
+            name=claims.get("name"),
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+    return AuthContext(
+        actor_type="user",
+        user=user,
+    )

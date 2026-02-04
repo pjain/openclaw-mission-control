@@ -4,14 +4,14 @@ If this file is empty, skip heartbeat work.
 
 ## Required inputs
 - BASE_URL (e.g. http://localhost:8000)
-- AUTH_TOKEN (Bearer token)
+- AUTH_TOKEN (agent token)
 - AGENT_NAME
 
 ## On every heartbeat
 1) Check in:
 ```bash
 curl -s -X POST "$BASE_URL/api/v1/agents/heartbeat" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "X-Agent-Token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "'$AGENT_NAME'", "status": "online"}'
 ```
@@ -19,13 +19,13 @@ curl -s -X POST "$BASE_URL/api/v1/agents/heartbeat" \
 2) List boards:
 ```bash
 curl -s "$BASE_URL/api/v1/boards" \
-  -H "Authorization: Bearer $AUTH_TOKEN"
+  -H "X-Agent-Token: $AUTH_TOKEN"
 ```
 
 3) For each board, list tasks:
 ```bash
 curl -s "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks" \
-  -H "Authorization: Bearer $AUTH_TOKEN"
+  -H "X-Agent-Token: $AUTH_TOKEN"
 ```
 
 4) Claim next task (FIFO):
@@ -33,7 +33,7 @@ curl -s "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks" \
 - Claim it by moving it to "in_progress":
 ```bash
 curl -s -X PATCH "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks/{TASK_ID}" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "X-Agent-Token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status": "in_progress"}'
 ```
@@ -43,7 +43,7 @@ curl -s -X PATCH "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks/{TASK_ID}" \
 - When complete, move to "review":
 ```bash
 curl -s -X PATCH "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks/{TASK_ID}" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "X-Agent-Token: $AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status": "review"}'
 ```
