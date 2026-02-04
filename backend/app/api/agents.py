@@ -14,7 +14,7 @@ from app.core.auth import AuthContext
 from app.core.config import settings
 from app.db.session import get_session
 from app.integrations.openclaw_gateway import (
-    GatewayConfig,
+    GatewayConfig as GatewayClientConfig,
     OpenClawGatewayError,
     ensure_session,
     send_message,
@@ -22,6 +22,7 @@ from app.integrations.openclaw_gateway import (
 from app.models.agents import Agent
 from app.models.activity_events import ActivityEvent
 from app.models.boards import Board
+from app.models.gateways import Gateway
 from app.schemas.agents import (
     AgentCreate,
     AgentDeleteConfirm,
@@ -57,7 +58,7 @@ def _workspace_path(agent_name: str, workspace_root: str | None) -> str:
     if not workspace_root:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Board gateway_workspace_root is required",
+            detail="Gateway workspace_root is required",
         )
     root = workspace_root.rstrip("/")
     return f"{root}/workspace-{_slugify(agent_name)}"
@@ -75,28 +76,41 @@ def _require_board(session: Session, board_id: UUID | str | None) -> Board:
     return board
 
 
-def _require_gateway_config(board: Board) -> GatewayConfig:
-    if not board.gateway_url:
+def _require_gateway(
+    session: Session, board: Board
+) -> tuple[Gateway, GatewayClientConfig]:
+    if not board.gateway_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Board gateway_url is required",
+            detail="Board gateway_id is required",
         )
-    if not board.gateway_main_session_key:
+    gateway = session.get(Gateway, board.gateway_id)
+    if gateway is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Board gateway_main_session_key is required",
+            detail="Board gateway_id is invalid",
         )
-    if not board.gateway_workspace_root:
+    if not gateway.main_session_key:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Board gateway_workspace_root is required",
+            detail="Gateway main_session_key is required",
         )
-    return GatewayConfig(url=board.gateway_url, token=board.gateway_token)
+    if not gateway.url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Gateway url is required",
+        )
+    if not gateway.workspace_root:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Gateway workspace_root is required",
+        )
+    return gateway, GatewayClientConfig(url=gateway.url, token=gateway.token)
 
 
 async def _ensure_gateway_session(
     agent_name: str,
-    config: GatewayConfig,
+    config: GatewayClientConfig,
 ) -> tuple[str, str | None]:
     session_key = _build_session_key(agent_name)
     try:
@@ -148,7 +162,7 @@ def _record_wakeup_failure(session: Session, agent: Agent, error: str) -> None:
 
 
 async def _send_wakeup_message(
-    agent: Agent, config: GatewayConfig, verb: str = "provisioned"
+    agent: Agent, config: GatewayClientConfig, verb: str = "provisioned"
 ) -> None:
     session_key = agent.openclaw_session_id or _build_session_key(agent.name)
     await ensure_session(session_key, config=config, label=agent.name)
@@ -176,8 +190,13 @@ async def create_agent(
     auth: AuthContext = Depends(require_admin_auth),
 ) -> Agent:
     board = _require_board(session, payload.board_id)
-    config = _require_gateway_config(board)
-    agent = Agent.model_validate(payload)
+    gateway, client_config = _require_gateway(session, board)
+    data = payload.model_dump()
+    if data.get("identity_template") == "":
+        data["identity_template"] = None
+    if data.get("soul_template") == "":
+        data["soul_template"] = None
+    agent = Agent.model_validate(data)
     agent.status = "provisioning"
     raw_token = generate_agent_token()
     agent.agent_token_hash = hash_agent_token(raw_token)
@@ -187,7 +206,9 @@ async def create_agent(
     agent.provision_confirm_token_hash = hash_agent_token(provision_token)
     agent.provision_requested_at = datetime.utcnow()
     agent.provision_action = "provision"
-    session_key, session_error = await _ensure_gateway_session(agent.name, config)
+    session_key, session_error = await _ensure_gateway_session(
+        agent.name, client_config
+    )
     agent.openclaw_session_id = session_key
     session.add(agent)
     session.commit()
@@ -209,7 +230,7 @@ async def create_agent(
     session.commit()
     try:
         await send_provisioning_message(
-            agent, board, raw_token, provision_token, auth.user
+            agent, board, gateway, raw_token, provision_token, auth.user
         )
         record_activity(
             session,
@@ -254,6 +275,10 @@ async def update_agent(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="status is controlled by agent heartbeat",
         )
+    if updates.get("identity_template") == "":
+        updates["identity_template"] = None
+    if updates.get("soul_template") == "":
+        updates["soul_template"] = None
     if not updates:
         return _with_computed_status(agent)
     if "board_id" in updates:
@@ -267,10 +292,10 @@ async def update_agent(
     session.commit()
     session.refresh(agent)
     board = _require_board(session, agent.board_id)
-    config = _require_gateway_config(board)
+    gateway, client_config = _require_gateway(session, board)
     session_key = agent.openclaw_session_id or _build_session_key(agent.name)
     try:
-        await ensure_session(session_key, config=config, label=agent.name)
+        await ensure_session(session_key, config=client_config, label=agent.name)
         if not agent.openclaw_session_id:
             agent.openclaw_session_id = session_key
             session.add(agent)
@@ -291,7 +316,7 @@ async def update_agent(
     session.refresh(agent)
     try:
         await send_update_message(
-            agent, board, raw_token, provision_token, auth.user
+            agent, board, gateway, raw_token, provision_token, auth.user
         )
         record_activity(
             session,
@@ -345,7 +370,7 @@ async def heartbeat_or_create_agent(
         if actor.actor_type == "agent":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         board = _require_board(session, payload.board_id)
-        config = _require_gateway_config(board)
+        gateway, client_config = _require_gateway(session, board)
         agent = Agent(
             name=payload.name,
             status="provisioning",
@@ -358,7 +383,9 @@ async def heartbeat_or_create_agent(
         agent.provision_confirm_token_hash = hash_agent_token(provision_token)
         agent.provision_requested_at = datetime.utcnow()
         agent.provision_action = "provision"
-        session_key, session_error = await _ensure_gateway_session(agent.name, config)
+        session_key, session_error = await _ensure_gateway_session(
+            agent.name, client_config
+        )
         agent.openclaw_session_id = session_key
         session.add(agent)
         session.commit()
@@ -380,7 +407,7 @@ async def heartbeat_or_create_agent(
         session.commit()
         try:
             await send_provisioning_message(
-                agent, board, raw_token, provision_token, actor.user
+                agent, board, gateway, raw_token, provision_token, actor.user
             )
             record_activity(
                 session,
@@ -410,9 +437,9 @@ async def heartbeat_or_create_agent(
         session.refresh(agent)
         try:
             board = _require_board(session, str(agent.board_id) if agent.board_id else None)
-            config = _require_gateway_config(board)
+            gateway, client_config = _require_gateway(session, board)
             await send_provisioning_message(
-                agent, board, raw_token, provision_token, actor.user
+                agent, board, gateway, raw_token, provision_token, actor.user
             )
             record_activity(
                 session,
@@ -428,8 +455,10 @@ async def heartbeat_or_create_agent(
             session.commit()
     elif not agent.openclaw_session_id:
         board = _require_board(session, str(agent.board_id) if agent.board_id else None)
-        config = _require_gateway_config(board)
-        session_key, session_error = await _ensure_gateway_session(agent.name, config)
+        gateway, client_config = _require_gateway(session, board)
+        session_key, session_error = await _ensure_gateway_session(
+            agent.name, client_config
+        )
         agent.openclaw_session_id = session_key
         if session_error:
             record_activity(
@@ -472,7 +501,7 @@ def delete_agent(
         return {"ok": True}
 
     board = _require_board(session, str(agent.board_id) if agent.board_id else None)
-    config = _require_gateway_config(board)
+    gateway, client_config = _require_gateway(session, board)
     raw_token = generate_agent_token()
     agent.delete_confirm_token_hash = hash_agent_token(raw_token)
     agent.delete_requested_at = datetime.utcnow()
@@ -488,10 +517,10 @@ def delete_agent(
     session.commit()
 
     async def _gateway_cleanup_request() -> None:
-        main_session = board.gateway_main_session_key
+        main_session = gateway.main_session_key
         if not main_session:
-            raise OpenClawGatewayError("Board gateway_main_session_key is required")
-        workspace_path = _workspace_path(agent.name, board.gateway_workspace_root)
+            raise OpenClawGatewayError("Gateway main_session_key is required")
+        workspace_path = _workspace_path(agent.name, gateway.workspace_root)
         base_url = settings.base_url or "REPLACE_WITH_BASE_URL"
         cleanup_message = (
             "Cleanup request for deleted agent.\n\n"
@@ -507,11 +536,11 @@ def delete_agent(
             "   Body: {\"token\": \"" + raw_token + "\"}\n"
             "Reply NO_REPLY."
         )
-        await ensure_session(main_session, config=config, label="Main Agent")
+        await ensure_session(main_session, config=client_config, label="Main Agent")
         await send_message(
             cleanup_message,
             session_key=main_session,
-            config=config,
+            config=client_config,
             deliver=False,
         )
 
@@ -549,7 +578,7 @@ def confirm_provision_agent(
     if agent.board_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
     board = _require_board(session, str(agent.board_id))
-    config = _require_gateway_config(board)
+    _, client_config = _require_gateway(session, board)
 
     action = payload.action or agent.provision_action or "provision"
     verb = "updated" if action == "update" else "provisioned"
@@ -557,7 +586,7 @@ def confirm_provision_agent(
     try:
         import asyncio
 
-        asyncio.run(_send_wakeup_message(agent, config, verb=verb))
+        asyncio.run(_send_wakeup_message(agent, client_config, verb=verb))
     except OpenClawGatewayError as exc:
         _record_wakeup_failure(session, agent, str(exc))
         session.commit()

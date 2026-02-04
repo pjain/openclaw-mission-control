@@ -9,9 +9,14 @@ from uuid import uuid4
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from app.core.config import settings
-from app.integrations.openclaw_gateway import GatewayConfig, ensure_session, send_message
+from app.integrations.openclaw_gateway import (
+    GatewayConfig as GatewayClientConfig,
+    ensure_session,
+    send_message,
+)
 from app.models.agents import Agent
 from app.models.boards import Board
+from app.models.gateways import Gateway
 from app.models.users import User
 
 TEMPLATE_FILES = [
@@ -99,18 +104,22 @@ def _workspace_path(agent_name: str, workspace_root: str) -> str:
 
 
 def _build_context(
-    agent: Agent, board: Board, auth_token: str, user: User | None
+    agent: Agent,
+    board: Board,
+    gateway: Gateway,
+    auth_token: str,
+    user: User | None,
 ) -> dict[str, str]:
-    if not board.gateway_workspace_root:
+    if not gateway.workspace_root:
         raise ValueError("gateway_workspace_root is required")
-    if not board.gateway_main_session_key:
+    if not gateway.main_session_key:
         raise ValueError("gateway_main_session_key is required")
     agent_id = str(agent.id)
-    workspace_root = board.gateway_workspace_root
+    workspace_root = gateway.workspace_root
     workspace_path = _workspace_path(agent.name, workspace_root)
     session_key = agent.openclaw_session_id or ""
     base_url = settings.base_url or "REPLACE_WITH_BASE_URL"
-    main_session_key = board.gateway_main_session_key
+    main_session_key = gateway.main_session_key
     return {
         "agent_name": agent.name,
         "agent_id": agent_id,
@@ -130,12 +139,12 @@ def _build_context(
     }
 
 
-def _build_file_blocks(context: dict[str, str], board: Board) -> str:
+def _build_file_blocks(context: dict[str, str], agent: Agent) -> str:
     overrides: dict[str, str] = {}
-    if board.identity_template:
-        overrides["IDENTITY.md"] = board.identity_template
-    if board.soul_template:
-        overrides["SOUL.md"] = board.soul_template
+    if agent.identity_template:
+        overrides["IDENTITY.md"] = agent.identity_template
+    if agent.soul_template:
+        overrides["SOUL.md"] = agent.soul_template
     templates = _read_templates(context, overrides=overrides)
     return "".join(
         _render_file_block(name, templates.get(name, "")) for name in TEMPLATE_FILES
@@ -143,10 +152,15 @@ def _build_file_blocks(context: dict[str, str], board: Board) -> str:
 
 
 def build_provisioning_message(
-    agent: Agent, board: Board, auth_token: str, confirm_token: str, user: User | None
+    agent: Agent,
+    board: Board,
+    gateway: Gateway,
+    auth_token: str,
+    confirm_token: str,
+    user: User | None,
 ) -> str:
-    context = _build_context(agent, board, auth_token, user)
-    file_blocks = _build_file_blocks(context, board)
+    context = _build_context(agent, board, gateway, auth_token, user)
+    file_blocks = _build_file_blocks(context, agent)
     heartbeat_snippet = json.dumps(
         {
             "id": _agent_key(agent),
@@ -190,10 +204,15 @@ def build_provisioning_message(
 
 
 def build_update_message(
-    agent: Agent, board: Board, auth_token: str, confirm_token: str, user: User | None
+    agent: Agent,
+    board: Board,
+    gateway: Gateway,
+    auth_token: str,
+    confirm_token: str,
+    user: User | None,
 ) -> str:
-    context = _build_context(agent, board, auth_token, user)
-    file_blocks = _build_file_blocks(context, board)
+    context = _build_context(agent, board, gateway, auth_token, user)
+    file_blocks = _build_file_blocks(context, agent)
     heartbeat_snippet = json.dumps(
         {
             "id": _agent_key(agent),
@@ -238,34 +257,48 @@ def build_update_message(
 async def send_provisioning_message(
     agent: Agent,
     board: Board,
+    gateway: Gateway,
     auth_token: str,
     confirm_token: str,
     user: User | None,
 ) -> None:
-    if not board.gateway_url:
+    if not gateway.url:
         return
-    if not board.gateway_main_session_key:
+    if not gateway.main_session_key:
         raise ValueError("gateway_main_session_key is required")
-    main_session = board.gateway_main_session_key
-    config = GatewayConfig(url=board.gateway_url, token=board.gateway_token)
-    await ensure_session(main_session, config=config, label="Main Agent")
-    message = build_provisioning_message(agent, board, auth_token, confirm_token, user)
-    await send_message(message, session_key=main_session, config=config, deliver=False)
+    main_session = gateway.main_session_key
+    client_config = GatewayClientConfig(
+        url=gateway.url, token=gateway.token
+    )
+    await ensure_session(main_session, config=client_config, label="Main Agent")
+    message = build_provisioning_message(
+        agent, board, gateway, auth_token, confirm_token, user
+    )
+    await send_message(
+        message, session_key=main_session, config=client_config, deliver=False
+    )
 
 
 async def send_update_message(
     agent: Agent,
     board: Board,
+    gateway: Gateway,
     auth_token: str,
     confirm_token: str,
     user: User | None,
 ) -> None:
-    if not board.gateway_url:
+    if not gateway.url:
         return
-    if not board.gateway_main_session_key:
+    if not gateway.main_session_key:
         raise ValueError("gateway_main_session_key is required")
-    main_session = board.gateway_main_session_key
-    config = GatewayConfig(url=board.gateway_url, token=board.gateway_token)
-    await ensure_session(main_session, config=config, label="Main Agent")
-    message = build_update_message(agent, board, auth_token, confirm_token, user)
-    await send_message(message, session_key=main_session, config=config, deliver=False)
+    main_session = gateway.main_session_key
+    client_config = GatewayClientConfig(
+        url=gateway.url, token=gateway.token
+    )
+    await ensure_session(main_session, config=client_config, label="Main Agent")
+    message = build_update_message(
+        agent, board, gateway, auth_token, confirm_token, user
+    )
+    await send_message(
+        message, session_key=main_session, config=client_config, deliver=False
+    )

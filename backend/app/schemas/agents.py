@@ -12,6 +12,8 @@ class AgentBase(SQLModel):
     name: str
     status: str = "provisioning"
     heartbeat_config: dict[str, Any] | None = None
+    identity_template: str | None = None
+    soul_template: str | None = None
 
 
 class AgentCreate(AgentBase):
@@ -23,6 +25,8 @@ class AgentUpdate(SQLModel):
     name: str | None = None
     status: str | None = None
     heartbeat_config: dict[str, Any] | None = None
+    identity_template: str | None = None
+    soul_template: str | None = None
 
 
 class AgentRead(AgentBase):

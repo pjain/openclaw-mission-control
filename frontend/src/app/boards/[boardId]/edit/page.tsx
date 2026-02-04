@@ -1,70 +1,45 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
+import { CheckCircle2, RefreshCcw, XCircle } from "lucide-react";
 
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { getApiBaseUrl } from "@/lib/api-base";
-import { CheckCircle2, RefreshCcw, XCircle } from "lucide-react";
 
 const apiBase = getApiBaseUrl();
 
-const DEFAULT_IDENTITY_TEMPLATE = `# IDENTITY.md
+const DEFAULT_MAIN_SESSION_KEY = "agent:main:main";
+const DEFAULT_WORKSPACE_ROOT = "~/.openclaw";
 
-Name: {{ agent_name }}
+type Board = {
+  id: string;
+  name: string;
+  slug: string;
+  gateway_id?: string | null;
+};
 
-Agent ID: {{ agent_id }}
-
-Creature: AI
-
-Vibe: calm, precise, helpful
-
-Emoji: :gear:
-`;
-
-const DEFAULT_SOUL_TEMPLATE = `# SOUL.md
-
-_You're not a chatbot. You're becoming someone._
-
-## Core Truths
-
-**Be genuinely helpful, not performatively helpful.** Skip the "Great question!" and "I'd be happy to help!" -- just help. Actions speak louder than filler words.
-
-**Have opinions.** You're allowed to disagree, prefer things, find stuff amusing or boring. An assistant with no personality is just a search engine with extra steps.
-
-**Be resourceful before asking.** Try to figure it out. Read the file. Check the context. Search for it. _Then_ ask if you're stuck. The goal is to come back with answers, not questions.
-
-**Earn trust through competence.** Your human gave you access to their stuff. Don't make them regret it. Be careful with external actions (emails, tweets, anything public). Be bold with internal ones (reading, organizing, learning).
-
-**Remember you're a guest.** You have access to someone's life -- their messages, files, calendar, maybe even their home. That's intimacy. Treat it with respect.
-
-## Boundaries
-
-- Private things stay private. Period.
-- When in doubt, ask before acting externally.
-- Never send half-baked replies to messaging surfaces.
-- You're not the user's voice -- be careful in group chats.
-
-## Vibe
-
-Be the assistant you'd actually want to talk to. Concise when needed, thorough when it matters. Not a corporate drone. Not a sycophant. Just... good.
-
-## Continuity
-
-Each session, you wake up fresh. These files _are_ your memory. Read them. Update them. They're how you persist.
-
-If you change this file, tell the user -- it's your soul, and they should know.
-
----
-
-_This file is yours to evolve. As you learn who you are, update it._
-`;
+type Gateway = {
+  id: string;
+  name: string;
+  url: string;
+  token?: string | null;
+  main_session_key: string;
+  workspace_root: string;
+  skyll_enabled?: boolean;
+};
 
 const validateGatewayUrl = (value: string) => {
   const trimmed = value.trim();
@@ -83,17 +58,6 @@ const validateGatewayUrl = (value: string) => {
   }
 };
 
-type Board = {
-  id: string;
-  name: string;
-  slug: string;
-  gateway_url?: string | null;
-  gateway_main_session_key?: string | null;
-  gateway_workspace_root?: string | null;
-  identity_template?: string | null;
-  soul_template?: string | null;
-};
-
 const slugify = (value: string) =>
   value
     .toLowerCase()
@@ -110,16 +74,21 @@ export default function EditBoardPage() {
 
   const [board, setBoard] = useState<Board | null>(null);
   const [name, setName] = useState("");
+  const [gateways, setGateways] = useState<Gateway[]>([]);
+  const [gatewayId, setGatewayId] = useState<string>("");
+  const [createNewGateway, setCreateNewGateway] = useState(false);
+
+  const [gatewayName, setGatewayName] = useState("");
   const [gatewayUrl, setGatewayUrl] = useState("");
   const [gatewayToken, setGatewayToken] = useState("");
-  const [gatewayMainSessionKey, setGatewayMainSessionKey] = useState("");
-  const [gatewayWorkspaceRoot, setGatewayWorkspaceRoot] = useState("");
-  const [identityTemplate, setIdentityTemplate] = useState(
-    DEFAULT_IDENTITY_TEMPLATE
+  const [gatewayMainSessionKey, setGatewayMainSessionKey] = useState(
+    DEFAULT_MAIN_SESSION_KEY
   );
-  const [soulTemplate, setSoulTemplate] = useState(DEFAULT_SOUL_TEMPLATE);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [gatewayWorkspaceRoot, setGatewayWorkspaceRoot] = useState(
+    DEFAULT_WORKSPACE_ROOT
+  );
+  const [skyllEnabled, setSkyllEnabled] = useState(false);
+
   const [gatewayUrlError, setGatewayUrlError] = useState<string | null>(null);
   const [gatewayCheckStatus, setGatewayCheckStatus] = useState<
     "idle" | "checking" | "success" | "error"
@@ -127,6 +96,95 @@ export default function EditBoardPage() {
   const [gatewayCheckMessage, setGatewayCheckMessage] = useState<string | null>(
     null
   );
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedGateway = useMemo(
+    () => gateways.find((gateway) => gateway.id === gatewayId) || null,
+    [gateways, gatewayId]
+  );
+
+  const loadGateways = async () => {
+    if (!isSignedIn) return;
+    const token = await getToken();
+    const response = await fetch(`${apiBase}/api/v1/gateways`, {
+      headers: { Authorization: token ? `Bearer ${token}` : "" },
+    });
+    if (!response.ok) {
+      throw new Error("Unable to load gateways.");
+    }
+    const data = (await response.json()) as Gateway[];
+    setGateways(data);
+    return data;
+  };
+
+  const loadGatewayDetails = async (configId: string) => {
+    const token = await getToken();
+    const response = await fetch(`${apiBase}/api/v1/gateways/${configId}`, {
+      headers: { Authorization: token ? `Bearer ${token}` : "" },
+    });
+    if (!response.ok) {
+      throw new Error("Unable to load gateway.");
+    }
+    const config = (await response.json()) as Gateway;
+    setGatewayName(config.name || "");
+    setGatewayUrl(config.url || "");
+    setGatewayToken(config.token || "");
+    setGatewayMainSessionKey(
+      config.main_session_key || DEFAULT_MAIN_SESSION_KEY
+    );
+    setGatewayWorkspaceRoot(config.workspace_root || DEFAULT_WORKSPACE_ROOT);
+    setSkyllEnabled(Boolean(config.skyll_enabled));
+  };
+
+  const loadBoard = async () => {
+    if (!isSignedIn || !boardId) return;
+    try {
+      const token = await getToken();
+      const response = await fetch(`${apiBase}/api/v1/boards/${boardId}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : "" },
+      });
+      if (!response.ok) {
+        throw new Error("Unable to load board.");
+      }
+      const data = (await response.json()) as Board;
+      setBoard(data);
+      setName(data.name ?? "");
+      if (data.gateway_id) {
+        setGatewayId(data.gateway_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    }
+  };
+
+  useEffect(() => {
+    loadBoard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardId, isSignedIn]);
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    loadGateways()
+      .then((configs) => {
+        if (!gatewayId && configs.length > 0) {
+          setGatewayId(configs[0].id);
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Something went wrong.");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn]);
+
+  useEffect(() => {
+    if (!isSignedIn || !gatewayId || createNewGateway) return;
+    loadGatewayDetails(gatewayId).catch((err) => {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gatewayId, createNewGateway]);
 
   const runGatewayCheck = async () => {
     const validationError = validateGatewayUrl(gatewayUrl);
@@ -151,12 +209,12 @@ export default function EditBoardPage() {
         params.set("gateway_main_session_key", gatewayMainSessionKey.trim());
       }
       const response = await fetch(
-        `${apiBase}/api/v1/gateway/status?${params.toString()}`,
+        `${apiBase}/api/v1/gateways/status?${params.toString()}`,
         {
           headers: {
             Authorization: token ? `Bearer ${token}` : "",
           },
-        },
+        }
       );
       const data = await response.json();
       if (!response.ok || !data?.connected) {
@@ -174,44 +232,31 @@ export default function EditBoardPage() {
     }
   };
 
-  const loadBoard = async () => {
-    if (!isSignedIn || !boardId) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const token = await getToken();
-      const response = await fetch(`${apiBase}/api/v1/boards/${boardId}`, {
-        headers: { Authorization: token ? `Bearer ${token}` : "" },
-      });
-      if (!response.ok) {
-        throw new Error("Unable to load board.");
-      }
-      const data = (await response.json()) as Board;
-      setBoard(data);
-      setName(data.name);
-      setGatewayUrl(data.gateway_url ?? "");
-      setGatewayMainSessionKey(data.gateway_main_session_key ?? "agent:main:main");
-      setGatewayWorkspaceRoot(data.gateway_workspace_root ?? "~/.openclaw");
-      setIdentityTemplate(data.identity_template ?? DEFAULT_IDENTITY_TEMPLATE);
-      setSoulTemplate(data.soul_template ?? DEFAULT_SOUL_TEMPLATE);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setIsLoading(false);
+  const handleGatewaySelection = (value: string) => {
+    if (value === "new") {
+      setCreateNewGateway(true);
+      setGatewayId("");
+      setGatewayName("");
+      setGatewayUrl("");
+      setGatewayToken("");
+      setGatewayMainSessionKey(DEFAULT_MAIN_SESSION_KEY);
+      setGatewayWorkspaceRoot(DEFAULT_WORKSPACE_ROOT);
+      setSkyllEnabled(false);
+      return;
     }
+    setCreateNewGateway(false);
+    setGatewayId(value);
   };
-
-  useEffect(() => {
-    loadBoard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSignedIn, boardId]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isSignedIn || !boardId) return;
-    const trimmed = name.trim();
-    if (!trimmed) {
+    if (!name.trim()) {
       setError("Board name is required.");
+      return;
+    }
+    if (!createNewGateway && !gatewayId) {
+      setError("Select a gateway before saving.");
       return;
     }
     const gatewayValidation = validateGatewayUrl(gatewayUrl);
@@ -221,34 +266,87 @@ export default function EditBoardPage() {
       setGatewayCheckMessage(gatewayValidation);
       return;
     }
+    if (!gatewayName.trim()) {
+      setError("Gateway name is required.");
+      return;
+    }
+    if (!gatewayMainSessionKey.trim()) {
+      setError("Main session key is required.");
+      return;
+    }
+    if (!gatewayWorkspaceRoot.trim()) {
+      setError("Workspace root is required.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     try {
       const token = await getToken();
-      const payload: Partial<Board> & { gateway_token?: string | null } = {
-        name: trimmed,
-        slug: board?.slug ?? slugify(trimmed),
-        gateway_url: gatewayUrl.trim() || null,
-        gateway_main_session_key: gatewayMainSessionKey.trim() || null,
-        gateway_workspace_root: gatewayWorkspaceRoot.trim() || null,
-        identity_template: identityTemplate.trim() || null,
-        soul_template: soulTemplate.trim() || null,
-      };
-      if (gatewayToken.trim()) {
-        payload.gateway_token = gatewayToken.trim();
+      let configId = gatewayId;
+
+      if (createNewGateway) {
+        const gatewayResponse = await fetch(`${apiBase}/api/v1/gateways`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: token ? `Bearer ${token}` : "",
+          },
+          body: JSON.stringify({
+            name: gatewayName.trim(),
+            url: gatewayUrl.trim(),
+            token: gatewayToken.trim() || null,
+            main_session_key: gatewayMainSessionKey.trim(),
+            workspace_root: gatewayWorkspaceRoot.trim(),
+            skyll_enabled: skyllEnabled,
+          }),
+        });
+        if (!gatewayResponse.ok) {
+          throw new Error("Unable to create gateway.");
+        }
+        const createdGateway = (await gatewayResponse.json()) as Gateway;
+        configId = createdGateway.id;
+      } else if (gatewayId) {
+        const gatewayResponse = await fetch(
+          `${apiBase}/api/v1/gateways/${gatewayId}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: token ? `Bearer ${token}` : "",
+            },
+            body: JSON.stringify({
+              name: gatewayName.trim(),
+              url: gatewayUrl.trim(),
+              token: gatewayToken.trim() || null,
+              main_session_key: gatewayMainSessionKey.trim(),
+              workspace_root: gatewayWorkspaceRoot.trim(),
+              skyll_enabled: skyllEnabled,
+            }),
+          }
+        );
+        if (!gatewayResponse.ok) {
+          throw new Error("Unable to update gateway.");
+        }
       }
+
       const response = await fetch(`${apiBase}/api/v1/boards/${boardId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: token ? `Bearer ${token}` : "",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          name: name.trim(),
+          slug: slugify(name.trim()),
+          gateway_id: configId || null,
+        }),
       });
       if (!response.ok) {
         throw new Error("Unable to update board.");
       }
-      router.push(`/boards/${boardId}`);
+      const updated = (await response.json()) as Board;
+      router.push(`/boards/${updated.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -278,10 +376,10 @@ export default function EditBoardPage() {
           <div className="border-b border-slate-200 bg-white px-8 py-6">
             <div>
               <h1 className="font-heading text-2xl font-semibold text-slate-900 tracking-tight">
-                {board?.name ?? "Edit board"}
+                Edit board
               </h1>
               <p className="mt-1 text-sm text-slate-500">
-                Update the board identity and gateway connection.
+                Update board settings and gateway.
               </p>
             </div>
           </div>
@@ -289,174 +387,184 @@ export default function EditBoardPage() {
           <div className="p-8">
             <form
               onSubmit={handleSubmit}
-              className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6"
+              className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
             >
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Board identity
-                </p>
-                <div className="mt-4">
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-900">
                     Board name <span className="text-red-500">*</span>
                   </label>
                   <Input
                     value={name}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="e.g. Product ops"
-                    disabled={isLoading}
-                    className="mt-2"
+                    placeholder="Board name"
+                    disabled={isLoading || !board}
                   />
                 </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-900">
+                    Gateway <span className="text-red-500">*</span>
+                  </label>
+                  <Select
+                    value={createNewGateway ? "new" : gatewayId}
+                    onValueChange={handleGatewaySelection}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a gateway" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {gateways.map((config) => (
+                        <SelectItem key={config.id} value={config.id}>
+                          {config.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="new">+ Create new gateway</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Gateway connection
-                </p>
-                <div className="mt-4 grid gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Gateway URL <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Gateway details
+                  </p>
+                  {!createNewGateway && selectedGateway ? (
+                    <span className="text-xs text-slate-500">
+                      {selectedGateway.url}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="space-y-5">
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-900">
+                        Gateway name <span className="text-red-500">*</span>
+                      </label>
                       <Input
-                        value={gatewayUrl}
-                        onChange={(event) => setGatewayUrl(event.target.value)}
-                        onBlur={runGatewayCheck}
-                        placeholder="ws://gateway:18789"
+                        value={gatewayName}
+                        onChange={(event) => setGatewayName(event.target.value)}
+                        placeholder="Primary gateway"
                         disabled={isLoading}
-                        className={`pr-12 ${
-                          gatewayUrlError
-                            ? "border-red-500 focus-visible:ring-red-500"
-                            : ""
-                        }`}
                       />
-                      <button
-                        type="button"
-                        onClick={runGatewayCheck}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-600"
-                        aria-label="Check gateway connection"
-                      >
-                        {gatewayCheckStatus === "checking" ? (
-                          <RefreshCcw className="h-4 w-4 animate-spin" />
-                        ) : gatewayCheckStatus === "success" ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
-                        ) : gatewayCheckStatus === "error" ? (
-                          <XCircle className="h-4 w-4 text-red-500" />
-                        ) : (
-                          <RefreshCcw className="h-4 w-4" />
-                        )}
-                      </button>
                     </div>
-                    {gatewayUrlError ? (
-                      <p className="text-xs text-red-500">{gatewayUrlError}</p>
-                    ) : gatewayCheckMessage ? (
-                      <p
-                        className={`text-xs ${
-                          gatewayCheckStatus === "success"
-                            ? "text-green-600"
-                            : "text-red-500"
-                        }`}
-                      >
-                        {gatewayCheckMessage}
-                      </p>
-                    ) : null}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-900">
+                        Gateway URL <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <Input
+                          value={gatewayUrl}
+                          onChange={(event) => setGatewayUrl(event.target.value)}
+                          onBlur={runGatewayCheck}
+                          placeholder="ws://gateway:18789"
+                          disabled={isLoading}
+                          className={
+                            gatewayUrlError ? "border-red-500" : undefined
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={runGatewayCheck}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          aria-label="Check gateway connection"
+                        >
+                          {gatewayCheckStatus === "checking" ? (
+                            <RefreshCcw className="h-4 w-4 animate-spin" />
+                          ) : gatewayCheckStatus === "success" ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          ) : gatewayCheckStatus === "error" ? (
+                            <XCircle className="h-4 w-4 text-red-500" />
+                          ) : (
+                            <RefreshCcw className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                      {gatewayUrlError ? (
+                        <p className="text-xs text-red-500">{gatewayUrlError}</p>
+                      ) : gatewayCheckMessage ? (
+                        <p
+                          className={
+                            gatewayCheckStatus === "success"
+                              ? "text-xs text-emerald-600"
+                              : "text-xs text-red-500"
+                          }
+                        >
+                          {gatewayCheckMessage}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Gateway token
-                    </label>
-                    <Input
-                      value={gatewayToken}
-                      onChange={(event) => setGatewayToken(event.target.value)}
-                      onBlur={runGatewayCheck}
-                      placeholder="Bearer token"
-                      disabled={isLoading}
-                    />
+
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-900">
+                        Gateway token
+                      </label>
+                      <Input
+                        value={gatewayToken}
+                        onChange={(event) => setGatewayToken(event.target.value)}
+                        onBlur={runGatewayCheck}
+                        placeholder="Bearer token"
+                        disabled={isLoading}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-900">
+                        Main session key <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        value={gatewayMainSessionKey}
+                        onChange={(event) =>
+                          setGatewayMainSessionKey(event.target.value)
+                        }
+                        placeholder={DEFAULT_MAIN_SESSION_KEY}
+                        disabled={isLoading}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-900">
+                        Workspace root <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        value={gatewayWorkspaceRoot}
+                        onChange={(event) =>
+                          setGatewayWorkspaceRoot(event.target.value)
+                        }
+                        placeholder={DEFAULT_WORKSPACE_ROOT}
+                        disabled={isLoading}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={skyllEnabled}
+                        onChange={(event) => setSkyllEnabled(event.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                      />
+                      <span>Enable Skyll dynamic skills</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Agent defaults
-                </p>
-                <div className="mt-4 grid gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Main session key <span className="text-red-500">*</span>
-                    </label>
-                    <Input
-                      value={gatewayMainSessionKey}
-                      onChange={(event) =>
-                        setGatewayMainSessionKey(event.target.value)
-                      }
-                      placeholder="agent:main:main"
-                      disabled={isLoading}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Workspace root <span className="text-red-500">*</span>
-                    </label>
-                    <Input
-                      value={gatewayWorkspaceRoot}
-                      onChange={(event) =>
-                        setGatewayWorkspaceRoot(event.target.value)
-                      }
-                      placeholder="~/.openclaw"
-                      disabled={isLoading}
-                    />
-                  </div>
-                </div>
-              </div>
+              {error ? <p className="text-sm text-red-500">{error}</p> : null}
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Agent templates
-                </p>
-                <div className="mt-4 grid gap-6 lg:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Identity template
-                    </label>
-                    <Textarea
-                      value={identityTemplate}
-                      onChange={(event) => setIdentityTemplate(event.target.value)}
-                      placeholder="Override IDENTITY.md for agents in this board."
-                      className="min-h-[180px]"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-900">
-                      Soul template
-                    </label>
-                    <Textarea
-                      value={soulTemplate}
-                      onChange={(event) => setSoulTemplate(event.target.value)}
-                      placeholder="Override SOUL.md for agents in this board."
-                      className="min-h-[180px]"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {error ? (
-                <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600 shadow-sm">
-                  {error}
-                </div>
-              ) : null}
-
-              <div className="flex flex-wrap items-center gap-3">
-                <Button type="submit" disabled={isLoading}>
-                  {isLoading ? "Saving…" : "Save changes"}
-                </Button>
+              <div className="flex justify-end gap-3">
                 <Button
-                  variant="outline"
                   type="button"
+                  variant="ghost"
                   onClick={() => router.push(`/boards/${boardId}`)}
+                  disabled={isLoading}
                 >
-                  Back to board
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isLoading || !board}>
+                  {isLoading ? "Saving…" : "Save changes"}
                 </Button>
               </div>
             </form>

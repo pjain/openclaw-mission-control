@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Bot, LayoutGrid } from "lucide-react";
+import { BarChart3, Bot, LayoutGrid, Network } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -27,6 +27,18 @@ export function DashboardSidebar() {
           >
             <BarChart3 className="h-4 w-4" />
             Dashboard
+          </Link>
+          <Link
+            href="/gateways"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-700 transition",
+              pathname.startsWith("/gateways")
+                ? "bg-blue-100 text-blue-800 font-medium"
+                : "hover:bg-slate-100"
+            )}
+          >
+            <Network className="h-4 w-4" />
+            Gateways
           </Link>
           <Link
             href="/boards"

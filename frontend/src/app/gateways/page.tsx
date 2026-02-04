@@ -1,0 +1,326 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+
+import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
+import {
+  type ColumnDef,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+
+import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
+import { DashboardShell } from "@/components/templates/DashboardShell";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { getApiBaseUrl } from "@/lib/api-base";
+
+const apiBase = getApiBaseUrl();
+
+type Gateway = {
+  id: string;
+  name: string;
+  url: string;
+  token?: string | null;
+  main_session_key: string;
+  workspace_root: string;
+  skyll_enabled?: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+const truncate = (value?: string | null, max = 24) => {
+  if (!value) return "—";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+};
+
+const formatTimestamp = (value?: string | null) => {
+  if (!value) return "—";
+  const date = new Date(`${value}${value.endsWith("Z") ? "" : "Z"}`);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+export default function GatewaysPage() {
+  const { getToken, isSignedIn } = useAuth();
+
+  const [gateways, setGateways] = useState<Gateway[]>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "name", desc: false },
+  ]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<Gateway | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const sortedGateways = useMemo(() => [...gateways], [gateways]);
+
+  const loadGateways = async () => {
+    if (!isSignedIn) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const response = await fetch(`${apiBase}/api/v1/gateways`, {
+        headers: { Authorization: token ? `Bearer ${token}` : "" },
+      });
+      if (!response.ok) {
+        throw new Error("Unable to load gateways.");
+      }
+      const data = (await response.json()) as Gateway[];
+      setGateways(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadGateways();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn]);
+
+  const handleDelete = async () => {
+    if (!deleteTarget || !isSignedIn) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const token = await getToken();
+      const response = await fetch(
+        `${apiBase}/api/v1/gateways/${deleteTarget.id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: token ? `Bearer ${token}` : "" },
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Unable to delete gateway.");
+      }
+      setGateways((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const columns = useMemo<ColumnDef<Gateway>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Gateway",
+        cell: ({ row }) => (
+          <div>
+            <p className="text-sm font-medium text-slate-900">
+              {row.original.name}
+            </p>
+            <p className="text-xs text-slate-500">
+              {truncate(row.original.url, 36)}
+            </p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "main_session_key",
+        header: "Main session",
+        cell: ({ row }) => (
+          <span className="text-sm text-slate-700">
+            {truncate(row.original.main_session_key, 24)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "workspace_root",
+        header: "Workspace root",
+        cell: ({ row }) => (
+          <span className="text-sm text-slate-700">
+            {truncate(row.original.workspace_root, 28)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "skyll_enabled",
+        header: "Skyll",
+        cell: ({ row }) => (
+          <span className="text-sm text-slate-700">
+            {row.original.skyll_enabled ? "Enabled" : "Off"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "updated_at",
+        header: "Updated",
+        cell: ({ row }) => (
+          <span className="text-sm text-slate-700">
+            {formatTimestamp(row.original.updated_at)}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" asChild size="sm">
+              <Link href={`/gateways/${row.original.id}/edit`}>Edit</Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDeleteTarget(row.original)}
+            >
+              Delete
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    []
+  );
+
+  const table = useReactTable({
+    data: sortedGateways,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  return (
+    <DashboardShell>
+      <SignedOut>
+        <div className="col-span-2 flex min-h-[calc(100vh-64px)] items-center justify-center bg-slate-50 p-10 text-center">
+          <div className="rounded-xl border border-slate-200 bg-white px-8 py-6 shadow-sm">
+            <p className="text-sm text-slate-600">Sign in to view gateways.</p>
+            <SignInButton mode="modal" forceRedirectUrl="/gateways">
+              <Button className="mt-4">Sign in</Button>
+            </SignInButton>
+          </div>
+        </div>
+      </SignedOut>
+      <SignedIn>
+        <DashboardSidebar />
+        <main className="flex-1 overflow-y-auto bg-slate-50">
+          <div className="border-b border-slate-200 bg-white px-8 py-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="font-heading text-2xl font-semibold text-slate-900 tracking-tight">
+                  Gateways
+                </h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  Manage OpenClaw gateway connections used by boards.
+                </p>
+              </div>
+              <Button asChild>
+                <Link href="/gateways/new">Create gateway</Link>
+              </Button>
+            </div>
+          </div>
+
+          <div className="p-8">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-900">All gateways</p>
+                  {isLoading ? (
+                    <span className="text-xs text-slate-500">Loading…</span>
+                  ) : (
+                    <span className="text-xs text-slate-500">
+                      {gateways.length} total
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <tr key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => (
+                          <th key={header.id} className="px-6 py-3 font-medium">
+                            {header.isPlaceholder
+                              ? null
+                              : flexRender(
+                                  header.column.columnDef.header,
+                                  header.getContext()
+                                )}
+                          </th>
+                        ))}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {table.getRowModel().rows.map((row) => (
+                      <tr key={row.id} className="hover:bg-slate-50">
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-6 py-4">
+                            {flexRender(
+                              cell.column.columnDef.cell,
+                              cell.getContext()
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!isLoading && gateways.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-slate-500">
+                  No gateways yet. Create your first gateway to connect boards.
+                </div>
+              ) : null}
+            </div>
+
+            {error ? <p className="mt-4 text-sm text-red-500">{error}</p> : null}
+          </div>
+        </main>
+      </SignedIn>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={() => setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete gateway?</DialogTitle>
+            <DialogDescription>
+              This removes the gateway connection from Mission Control. Boards
+              using it will need a new gateway assigned.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError ? (
+            <p className="text-sm text-red-500">{deleteError}</p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </DashboardShell>
+  );
+}

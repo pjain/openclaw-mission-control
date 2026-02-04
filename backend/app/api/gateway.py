@@ -3,10 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlmodel import Session
 
-from app.api.deps import require_admin_auth
-from app.core.auth import AuthContext
+from app.core.auth import AuthContext, get_auth_context
 from app.integrations.openclaw_gateway import (
-    GatewayConfig,
+    GatewayConfig as GatewayClientConfig,
     OpenClawGatewayError,
     ensure_session,
     get_chat_history,
@@ -20,19 +19,24 @@ from app.integrations.openclaw_gateway_protocol import (
 )
 from app.db.session import get_session
 from app.models.boards import Board
+from app.models.gateways import Gateway
 
-router = APIRouter(prefix="/gateway", tags=["gateway"])
+router = APIRouter(prefix="/gateways", tags=["gateways"])
 
 
-def _resolve_gateway_config(
+def _resolve_gateway(
     session: Session,
     board_id: str | None,
     gateway_url: str | None,
     gateway_token: str | None,
     gateway_main_session_key: str | None,
-) -> tuple[Board | None, GatewayConfig, str | None]:
+) -> tuple[Board | None, GatewayClientConfig, str | None]:
     if gateway_url:
-        return None, GatewayConfig(url=gateway_url, token=gateway_token), gateway_main_session_key
+        return (
+            None,
+            GatewayClientConfig(url=gateway_url, token=gateway_token),
+            gateway_main_session_key,
+        )
     if not board_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -41,24 +45,53 @@ def _resolve_gateway_config(
     board = session.get(Board, board_id)
     if board is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
-    if not board.gateway_url:
+    if not board.gateway_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Board gateway_url is required",
+            detail="Board gateway_id is required",
         )
-    return board, GatewayConfig(url=board.gateway_url, token=board.gateway_token), board.gateway_main_session_key
+    gateway = session.get(Gateway, board.gateway_id)
+    if gateway is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Board gateway_id is invalid",
+        )
+    if not gateway.url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Gateway url is required",
+        )
+    return (
+        board,
+        GatewayClientConfig(url=gateway.url, token=gateway.token),
+        gateway.main_session_key,
+    )
+
+
+def _require_gateway(
+    session: Session, board_id: str | None
+) -> tuple[Board, GatewayClientConfig, str | None]:
+    board, config, main_session = _resolve_gateway(
+        session, board_id, None, None, None
+    )
+    if board is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="board_id is required",
+        )
+    return board, config, main_session
 
 
 @router.get("/status")
-async def gateway_status(
+async def gateways_status(
     board_id: str | None = Query(default=None),
     gateway_url: str | None = Query(default=None),
     gateway_token: str | None = Query(default=None),
     gateway_main_session_key: str | None = Query(default=None),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, object]:
-    board, config, main_session = _resolve_gateway_config(
+    board, config, main_session = _resolve_gateway(
         session,
         board_id,
         gateway_url,
@@ -100,12 +133,12 @@ async def gateway_status(
 
 
 @router.get("/sessions")
-async def list_sessions(
+async def list_gateway_sessions(
     board_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, object]:
-    board, config, main_session = _resolve_gateway_config(
+    board, config, main_session = _resolve_gateway(
         session,
         board_id,
         None,
@@ -144,9 +177,9 @@ async def get_gateway_session(
     session_id: str,
     board_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, object]:
-    board, config, main_session = _resolve_gateway_config(
+    board, config, main_session = _resolve_gateway(
         session,
         board_id,
         None,
@@ -161,7 +194,6 @@ async def get_gateway_session(
         sessions_list = list(sessions.get("sessions") or [])
     else:
         sessions_list = list(sessions or [])
-    main_session = board.gateway_main_session_key
     if main_session and not any(
         session.get("key") == main_session for session in sessions_list
     ):
@@ -194,9 +226,9 @@ async def get_session_history(
     session_id: str,
     board_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, object]:
-    _, config = _require_board_config(session, board_id)
+    _, config, _ = _require_gateway(session, board_id)
     try:
         history = await get_chat_history(session_id, config=config)
     except OpenClawGatewayError as exc:
@@ -207,21 +239,20 @@ async def get_session_history(
 
 
 @router.post("/sessions/{session_id}/message")
-async def send_session_message(
+async def send_gateway_session_message(
     session_id: str,
     payload: dict = Body(...),
     board_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, bool]:
     content = payload.get("content")
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="content is required"
         )
-    board, config = _require_board_config(session, board_id)
+    board, config, main_session = _require_gateway(session, board_id)
     try:
-        main_session = board.gateway_main_session_key
         if main_session and session_id == main_session:
             await ensure_session(main_session, config=config, label="Main Agent")
         await send_message(content, session_key=session_id, config=config)
@@ -232,7 +263,7 @@ async def send_session_message(
 
 @router.get("/commands")
 async def gateway_commands(
-    auth: AuthContext = Depends(require_admin_auth),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, object]:
     return {
         "protocol_version": PROTOCOL_VERSION,

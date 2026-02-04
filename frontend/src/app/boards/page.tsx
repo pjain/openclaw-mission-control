@@ -108,7 +108,6 @@ export default function BoardsPage() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium text-strong">{row.original.name}</p>
-            <p className="text-xs text-quiet">{row.original.slug}</p>
           </div>
         ),
       },

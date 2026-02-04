@@ -9,7 +9,12 @@ import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { getApiBaseUrl } from "@/lib/api-base";
+import {
+  DEFAULT_IDENTITY_TEMPLATE,
+  DEFAULT_SOUL_TEMPLATE,
+} from "@/lib/agent-templates";
 import {
   Select,
   SelectContent,
@@ -40,6 +45,10 @@ export default function NewAgentPage() {
   const [boardId, setBoardId] = useState<string>("");
   const [heartbeatEvery, setHeartbeatEvery] = useState("10m");
   const [heartbeatTarget, setHeartbeatTarget] = useState("none");
+  const [identityTemplate, setIdentityTemplate] = useState(
+    DEFAULT_IDENTITY_TEMPLATE
+  );
+  const [soulTemplate, setSoulTemplate] = useState(DEFAULT_SOUL_TEMPLATE);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,6 +106,8 @@ export default function NewAgentPage() {
             every: heartbeatEvery.trim() || "10m",
             target: heartbeatTarget,
           },
+          identity_template: identityTemplate.trim() || null,
+          soul_template: soulTemplate.trim() || null,
         }),
       });
       if (!response.ok) {
@@ -153,7 +164,7 @@ export default function NewAgentPage() {
                 <div className="mt-4 grid gap-6 md:grid-cols-2">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-900">
-                      Agent name
+                      Agent name <span className="text-red-500">*</span>
                     </label>
                     <Input
                       value={name}
@@ -164,7 +175,7 @@ export default function NewAgentPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-900">
-                      Board
+                      Board <span className="text-red-500">*</span>
                     </label>
                     <Select
                       value={boardId}
@@ -187,6 +198,36 @@ export default function NewAgentPage() {
                         Create a board before adding agents.
                       </p>
                     ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Agent persona
+                </p>
+                <div className="mt-4 space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-900">
+                      Identity template
+                    </label>
+                    <Textarea
+                      value={identityTemplate}
+                      onChange={(event) => setIdentityTemplate(event.target.value)}
+                      rows={8}
+                      disabled={isLoading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-900">
+                      Soul template
+                    </label>
+                    <Textarea
+                      value={soulTemplate}
+                      onChange={(event) => setSoulTemplate(event.target.value)}
+                      rows={10}
+                      disabled={isLoading}
+                    />
                   </div>
                 </div>
               </div>

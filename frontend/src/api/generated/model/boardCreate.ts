@@ -8,10 +8,5 @@
 export interface BoardCreate {
   name: string;
   slug: string;
-  gateway_url?: string | null;
-  gateway_main_session_key?: string | null;
-  gateway_workspace_root?: string | null;
-  identity_template?: string | null;
-  soul_template?: string | null;
-  gateway_token?: string | null;
+  gateway_id?: string | null;
 }

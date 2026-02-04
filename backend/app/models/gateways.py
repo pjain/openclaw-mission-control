@@ -3,17 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlmodel import Field
-
-from app.models.tenancy import TenantScoped
+from sqlmodel import Field, SQLModel
 
 
-class Board(TenantScoped, table=True):
-    __tablename__ = "boards"
+class Gateway(SQLModel, table=True):
+    __tablename__ = "gateways"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str
-    slug: str = Field(index=True)
-    gateway_id: UUID | None = Field(default=None, foreign_key="gateways.id", index=True)
+    url: str
+    token: str | None = Field(default=None)
+    main_session_key: str
+    workspace_root: str
+    skyll_enabled: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -20,6 +20,8 @@ class Agent(SQLModel, table=True):
     heartbeat_config: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON)
     )
+    identity_template: str | None = Field(default=None, sa_column=Column(Text))
+    soul_template: str | None = Field(default=None, sa_column=Column(Text))
     provision_requested_at: datetime | None = Field(default=None)
     provision_confirm_token_hash: str | None = Field(default=None, index=True)
     provision_action: str | None = Field(default=None, index=True)

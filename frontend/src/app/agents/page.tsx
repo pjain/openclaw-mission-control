@@ -171,7 +171,7 @@ export default function AgentsPage() {
     try {
       const token = await getToken();
       const response = await fetch(
-        `${apiBase}/api/v1/gateway/status?board_id=${boardId}`,
+        `${apiBase}/api/v1/gateways/status?board_id=${boardId}`,
         { headers: { Authorization: token ? `Bearer ${token}` : "" } }
       );
       if (!response.ok) {
