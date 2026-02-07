@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 
 from app.core.error_handling import REQUEST_ID_HEADER, RequestIdMiddleware
