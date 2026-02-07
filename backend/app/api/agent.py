@@ -17,6 +17,7 @@ from app.api import tasks as tasks_api
 from app.api.deps import ActorContext, get_board_or_404, get_task_or_404
 from app.core.agent_auth import AgentAuthContext, get_agent_auth_context
 from app.core.config import settings
+from app.core.time import utcnow
 from app.db.pagination import paginate
 from app.db.session import get_session
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
@@ -572,6 +573,12 @@ async def update_agent_soul(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="content is required",
         )
+
+    # Persist the SOUL in the DB so future reprovision/update doesn't overwrite it.
+    target.soul_template = content
+    target.updated_at = utcnow()
+    session.add(target)
+    await session.commit()
     try:
         await openclaw_call(
             "agents.files.set",

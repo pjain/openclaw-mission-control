@@ -321,6 +321,7 @@ Tools:
 - Update an agent's SOUL.md (lead-only):
   PUT $BASE_URL/api/v1/agent/boards/$BOARD_ID/agents/<AGENT_ID>/soul
   Body: {"content":"<new SOUL.md>","source_url":"<optional>","reason":"<optional>"}
+  Notes: this persists as the agent's `soul_template` so future reprovision won't overwrite it.
 
 ## Memory Maintenance (every 2-3 days)
 Lightweight consolidation (modeled on human "sleep consolidation"):
