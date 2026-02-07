@@ -1,5 +1,20 @@
 /// <reference types="cypress" />
 
+function clerkOriginFromPublishableKey(): string {
+  const key = Cypress.env("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") as string | undefined;
+  if (!key) throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY in Cypress env");
+
+  const m = /^pk_(?:test|live)_(.+)$/.exec(key);
+  if (!m) throw new Error(`Unexpected Clerk publishable key format: ${key}`);
+
+  const decoded = atob(m[1]); // e.g. beloved-ghost-73.clerk.accounts.dev$
+  const domain = decoded.replace(/\$$/, "");
+
+  // In practice, the hosted UI in CI redirects to `*.accounts.dev` (no `clerk.` subdomain).
+  const normalized = domain.replace(".clerk.accounts.dev", ".accounts.dev");
+  return `https://${normalized}`;
+}
+
 describe("/activity feed", () => {
   const apiBase = "**/api/v1";
 
@@ -17,26 +32,36 @@ describe("/activity feed", () => {
     ).as("activityStream");
   }
 
-  function signInWithClerk({ otp }: { otp: string }) {
+  function clickSignInAndCompleteOtp({ otp }: { otp: string }) {
     cy.contains(/sign in to view the feed/i).should("be.visible");
     cy.get('[data-testid="activity-signin"]').click();
 
-    cy.get('input[type="email"], input[name="identifier"]', { timeout: 20_000 })
-      .first()
-      .should("be.visible")
-      .clear()
-      .type("jane+clerk_test@example.com");
+    const clerkOrigin = clerkOriginFromPublishableKey();
 
-    cy.contains('button', /continue|sign in/i).click();
+    // Once redirected to Clerk, we must use cy.origin() for all interactions.
+    cy.origin(
+      clerkOrigin,
+      { args: { email: "jane+clerk_test@example.com", otp } },
+      ({ email, otp }) => {
+        cy.get('input[type="email"], input[name="identifier"]', { timeout: 20_000 })
+          .first()
+          .should("be.visible")
+          .clear()
+          .type(email);
 
-    cy.get('input', { timeout: 20_000 })
-      .filter('[inputmode="numeric"], [autocomplete="one-time-code"], [type="tel"], [name="code"], [type="text"]')
-      .first()
-      .should("be.visible")
-      .type(otp);
+        cy.contains('button', /continue|sign in/i).click();
 
-    cy.contains('button', /verify|continue|sign in/i).click();
+        cy.get('input', { timeout: 20_000 })
+          .filter('[inputmode="numeric"], [autocomplete="one-time-code"], [type="tel"], [name="code"], [type="text"]')
+          .first()
+          .should("be.visible")
+          .type(otp);
 
+        cy.contains('button', /verify|continue|sign in/i).click();
+      },
+    );
+
+    // Back to app
     cy.contains(/live feed/i, { timeout: 30_000 }).should("be.visible");
   }
 
@@ -46,23 +71,30 @@ describe("/activity feed", () => {
     cy.contains(/sign in to view the feed/i).should("be.visible");
     cy.get('[data-testid="activity-signin"]').click();
 
-    cy.get('input[type="email"], input[name="identifier"]', { timeout: 20_000 })
-      .first()
-      .should("be.visible")
-      .clear()
-      .type("jane+clerk_test@example.com");
+    const clerkOrigin = clerkOriginFromPublishableKey();
+    cy.origin(
+      clerkOrigin,
+      { args: { email: "jane+clerk_test@example.com", otp: "000000" } },
+      ({ email, otp }) => {
+        cy.get('input[type="email"], input[name="identifier"]', { timeout: 20_000 })
+          .first()
+          .should("be.visible")
+          .clear()
+          .type(email);
 
-    cy.contains('button', /continue|sign in/i).click();
+        cy.contains('button', /continue|sign in/i).click();
 
-    cy.get('input', { timeout: 20_000 })
-      .filter('[inputmode="numeric"], [autocomplete="one-time-code"], [type="tel"], [name="code"], [type="text"]')
-      .first()
-      .should("be.visible")
-      .type("000000");
+        cy.get('input', { timeout: 20_000 })
+          .filter('[inputmode="numeric"], [autocomplete="one-time-code"], [type="tel"], [name="code"], [type="text"]')
+          .first()
+          .should("be.visible")
+          .type(otp);
 
-    cy.contains('button', /verify|continue|sign in/i).click();
+        cy.contains('button', /verify|continue|sign in/i).click();
 
-    cy.contains(/invalid|incorrect|try again/i, { timeout: 20_000 }).should("be.visible");
+        cy.contains(/invalid|incorrect|try again/i, { timeout: 20_000 }).should("be.visible");
+      },
+    );
   });
 
   it("happy path: renders task comment cards", () => {
@@ -88,7 +120,7 @@ describe("/activity feed", () => {
     stubStreamEmpty();
 
     cy.visit("/activity");
-    signInWithClerk({ otp: "424242" });
+    clickSignInAndCompleteOtp({ otp: "424242" });
 
     cy.wait("@activityList");
     cy.contains("CI hardening").should("be.visible");
@@ -104,7 +136,7 @@ describe("/activity feed", () => {
     stubStreamEmpty();
 
     cy.visit("/activity");
-    signInWithClerk({ otp: "424242" });
+    clickSignInAndCompleteOtp({ otp: "424242" });
 
     cy.wait("@activityList");
     cy.contains(/waiting for new comments/i).should("be.visible");
@@ -119,7 +151,7 @@ describe("/activity feed", () => {
     stubStreamEmpty();
 
     cy.visit("/activity");
-    signInWithClerk({ otp: "424242" });
+    clickSignInAndCompleteOtp({ otp: "424242" });
 
     cy.wait("@activityList");
     cy.contains(/unable to load feed|boom/i).should("be.visible");
