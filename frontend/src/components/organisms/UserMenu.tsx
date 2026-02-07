@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { SignOutButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, useUser } from "@/auth/clerk";
 import { LogOut } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";

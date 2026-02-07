@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth } from "@/auth/clerk";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Clock } from "lucide-react";

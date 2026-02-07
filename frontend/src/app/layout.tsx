@@ -3,9 +3,9 @@ import "./globals.css";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-import { ClerkProvider } from "@clerk/nextjs";
 import { IBM_Plex_Sans, Sora } from "next/font/google";
 
+import { AuthProvider } from "@/components/providers/AuthProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 
 export const metadata: Metadata = {
@@ -29,14 +29,14 @@ const headingFont = Sora({
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body
-          className={`${bodyFont.variable} ${headingFont.variable} min-h-screen bg-app text-strong antialiased`}
-        >
+    <html lang="en">
+      <body
+        className={`${bodyFont.variable} ${headingFont.variable} min-h-screen bg-app text-strong antialiased`}
+      >
+        <AuthProvider>
           <QueryProvider>{children}</QueryProvider>
-        </body>
-      </html>
-    </ClerkProvider>
+        </AuthProvider>
+      </body>
+    </html>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { SignInButton, SignedIn, SignedOut } from "@clerk/nextjs";
+import { SignInButton, SignedIn, SignedOut } from "@/auth/clerk";
 
 import { HeroCopy } from "@/components/molecules/HeroCopy";
 import { Button } from "@/components/ui/button";

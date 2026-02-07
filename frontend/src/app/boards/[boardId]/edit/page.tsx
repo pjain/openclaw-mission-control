@@ -1,9 +1,11 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
-import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
+import { SignInButton, SignedIn, SignedOut, useAuth } from "@/auth/clerk";
 import { X } from "lucide-react";
 
 import { ApiError } from "@/api/mutator";

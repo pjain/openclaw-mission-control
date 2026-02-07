@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import { SignedIn } from "@clerk/nextjs";
+import { SignedIn } from "@/auth/clerk";
 
 import { BrandMark } from "@/components/atoms/BrandMark";
 import { UserMenu } from "@/components/organisms/UserMenu";
