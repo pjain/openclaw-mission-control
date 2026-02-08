@@ -27,6 +27,7 @@ from app.core.auth import AuthContext
 from app.core.time import utcnow
 from app.db.pagination import paginate
 from app.db.session import async_session_maker, get_session
+from app.db.sqlmodel_exec import exec_dml
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
 from app.integrations.openclaw_gateway import OpenClawGatewayError, ensure_session, send_message
 from app.models.activity_events import ActivityEvent
@@ -990,16 +991,17 @@ async def delete_task(
     if auth.user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     await require_board_access(session, user=auth.user, board=board, write=True)
-    await session.execute(delete(ActivityEvent).where(col(ActivityEvent.task_id) == task.id))
-    await session.execute(delete(TaskFingerprint).where(col(TaskFingerprint.task_id) == task.id))
-    await session.execute(delete(Approval).where(col(Approval.task_id) == task.id))
-    await session.execute(
+    await exec_dml(session, delete(ActivityEvent).where(col(ActivityEvent.task_id) == task.id))
+    await exec_dml(session, delete(TaskFingerprint).where(col(TaskFingerprint.task_id) == task.id))
+    await exec_dml(session, delete(Approval).where(col(Approval.task_id) == task.id))
+    await exec_dml(
+        session,
         delete(TaskDependency).where(
             or_(
                 col(TaskDependency.task_id) == task.id,
                 col(TaskDependency.depends_on_task_id) == task.id,
             )
-        )
+        ),
     )
     await session.delete(task)
     await session.commit()

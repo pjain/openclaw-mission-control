@@ -19,6 +19,7 @@ from app.core.time import utcnow
 from app.db import crud
 from app.db.pagination import paginate
 from app.db.session import get_session
+from app.db.sqlmodel_exec import exec_dml
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
 from app.integrations.openclaw_gateway import (
     OpenClawGatewayError,
@@ -140,8 +141,7 @@ async def _apply_board_update(
             updates["board_group_id"],
             organization_id=board.organization_id,
         )
-    for key, value in updates.items():
-        setattr(board, key, value)
+    crud.apply_updates(board, updates)
     if updates.get("board_type") == "goal":
         # Validate only when explicitly switching to goal boards.
         if not board.objective or not board.success_metrics:
@@ -307,36 +307,43 @@ async def delete_board(
             ) from exc
 
     if task_ids:
-        await session.execute(delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids)))
-    await session.execute(delete(TaskDependency).where(col(TaskDependency.board_id) == board.id))
-    await session.execute(delete(TaskFingerprint).where(col(TaskFingerprint.board_id) == board.id))
+        await exec_dml(
+            session, delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids))
+        )
+    await exec_dml(session, delete(TaskDependency).where(col(TaskDependency.board_id) == board.id))
+    await exec_dml(
+        session, delete(TaskFingerprint).where(col(TaskFingerprint.board_id) == board.id)
+    )
 
     # Approvals can reference tasks and agents, so delete before both.
-    await session.execute(delete(Approval).where(col(Approval.board_id) == board.id))
+    await exec_dml(session, delete(Approval).where(col(Approval.board_id) == board.id))
 
-    await session.execute(delete(BoardMemory).where(col(BoardMemory.board_id) == board.id))
-    await session.execute(
-        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id) == board.id)
+    await exec_dml(session, delete(BoardMemory).where(col(BoardMemory.board_id) == board.id))
+    await exec_dml(
+        session,
+        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id) == board.id),
     )
-    await session.execute(
-        delete(OrganizationBoardAccess).where(col(OrganizationBoardAccess.board_id) == board.id)
+    await exec_dml(
+        session,
+        delete(OrganizationBoardAccess).where(col(OrganizationBoardAccess.board_id) == board.id),
     )
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationInviteBoardAccess).where(
             col(OrganizationInviteBoardAccess.board_id) == board.id
-        )
+        ),
     )
 
     # Tasks reference agents (assigned_agent_id) and have dependents (fingerprints/dependencies), so
     # delete tasks before agents.
-    await session.execute(delete(Task).where(col(Task.board_id) == board.id))
+    await exec_dml(session, delete(Task).where(col(Task.board_id) == board.id))
 
     if agents:
         agent_ids = [agent.id for agent in agents]
-        await session.execute(
-            delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids))
+        await exec_dml(
+            session, delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids))
         )
-        await session.execute(delete(Agent).where(col(Agent.id).in_(agent_ids)))
+        await exec_dml(session, delete(Agent).where(col(Agent.id).in_(agent_ids)))
     await session.delete(board)
     await session.commit()
     return OkResponse()

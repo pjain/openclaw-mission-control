@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, TypeVar
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel.sql.expression import SelectOfScalar
 
 ModelT = TypeVar("ModelT", bound=SQLModel)
 
@@ -18,15 +19,19 @@ class MultipleObjectsReturned(LookupError):
     pass
 
 
+def _lookup_statement(model: type[ModelT], lookup: Mapping[str, Any]) -> SelectOfScalar[ModelT]:
+    stmt = select(model)
+    for key, value in lookup.items():
+        stmt = stmt.where(getattr(model, key) == value)
+    return stmt
+
+
 async def get_by_id(session: AsyncSession, model: type[ModelT], obj_id: Any) -> ModelT | None:
     return await session.get(model, obj_id)
 
 
 async def get(session: AsyncSession, model: type[ModelT], **lookup: Any) -> ModelT:
-    stmt = select(model)
-    for key, value in lookup.items():
-        stmt = stmt.where(getattr(model, key) == value)
-    stmt = stmt.limit(2)
+    stmt = _lookup_statement(model, lookup).limit(2)
     items = (await session.exec(stmt)).all()
     if not items:
         raise DoesNotExist(f"{model.__name__} matching query does not exist.")
@@ -38,9 +43,7 @@ async def get(session: AsyncSession, model: type[ModelT], **lookup: Any) -> Mode
 
 
 async def get_one_by(session: AsyncSession, model: type[ModelT], **lookup: Any) -> ModelT | None:
-    stmt = select(model)
-    for key, value in lookup.items():
-        stmt = stmt.where(getattr(model, key) == value)
+    stmt = _lookup_statement(model, lookup)
     return (await session.exec(stmt)).first()
 
 
@@ -84,6 +87,64 @@ async def delete(session: AsyncSession, obj: ModelT, *, commit: bool = True) -> 
         await session.commit()
 
 
+async def list_by(
+    session: AsyncSession,
+    model: type[ModelT],
+    *,
+    order_by: Iterable[Any] = (),
+    limit: int | None = None,
+    offset: int | None = None,
+    **lookup: Any,
+) -> list[ModelT]:
+    stmt = _lookup_statement(model, lookup)
+    for ordering in order_by:
+        stmt = stmt.order_by(ordering)
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(await session.exec(stmt))
+
+
+async def exists(session: AsyncSession, model: type[ModelT], **lookup: Any) -> bool:
+    return (await session.exec(_lookup_statement(model, lookup).limit(1))).first() is not None
+
+
+def apply_updates(
+    obj: ModelT,
+    updates: Mapping[str, Any],
+    *,
+    exclude_none: bool = False,
+    allowed_fields: set[str] | None = None,
+) -> ModelT:
+    for key, value in updates.items():
+        if allowed_fields is not None and key not in allowed_fields:
+            continue
+        if exclude_none and value is None:
+            continue
+        setattr(obj, key, value)
+    return obj
+
+
+async def patch(
+    session: AsyncSession,
+    obj: ModelT,
+    updates: Mapping[str, Any],
+    *,
+    exclude_none: bool = False,
+    allowed_fields: set[str] | None = None,
+    commit: bool = True,
+    refresh: bool = True,
+) -> ModelT:
+    apply_updates(
+        obj,
+        updates,
+        exclude_none=exclude_none,
+        allowed_fields=allowed_fields,
+    )
+    return await save(session, obj, commit=commit, refresh=refresh)
+
+
 async def get_or_create(
     session: AsyncSession,
     model: type[ModelT],
@@ -93,9 +154,7 @@ async def get_or_create(
     refresh: bool = True,
     **lookup: Any,
 ) -> tuple[ModelT, bool]:
-    stmt = select(model)
-    for key, value in lookup.items():
-        stmt = stmt.where(getattr(model, key) == value)
+    stmt = _lookup_statement(model, lookup)
 
     existing = (await session.exec(stmt)).first()
     if existing is not None:

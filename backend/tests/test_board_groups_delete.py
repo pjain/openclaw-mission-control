@@ -15,6 +15,9 @@ class _FakeSession:
     executed: list[Any] = field(default_factory=list)
     committed: int = 0
 
+    async def exec(self, statement: Any) -> None:
+        self.executed.append(statement)
+
     async def execute(self, statement: Any) -> None:
         self.executed.append(statement)
 

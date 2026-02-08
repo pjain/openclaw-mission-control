@@ -4,7 +4,7 @@ extend-ignore = E203, W503, E501
 exclude =
   .venv,
   backend/.venv,
-  alembic,
-  backend/alembic,
+  migrations,
+  backend/migrations,
   **/__pycache__,
   **/*.pyc

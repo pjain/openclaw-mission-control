@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `backend/`: FastAPI service.
   - App code: `backend/app/` (routes `backend/app/api/`, models `backend/app/models/`, schemas `backend/app/schemas/`, workers `backend/app/workers/`).
-  - DB migrations: `backend/alembic/` (generated versions in `backend/alembic/versions/`).
+  - DB migrations: `backend/migrations/` (generated versions in `backend/migrations/versions/`).
   - Tests: `backend/tests/`.
 - `frontend/`: Next.js app.
   - Routes: `frontend/src/app/`; shared UI: `frontend/src/components/`; utilities: `frontend/src/lib/`.

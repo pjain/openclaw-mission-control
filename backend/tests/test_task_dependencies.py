@@ -68,6 +68,10 @@ class _FakeSession:
     added: list[object] = field(default_factory=list)
 
     async def exec(self, _query):
+        is_dml = _query.__class__.__name__ in {"Delete", "Update", "Insert"}
+        if is_dml:
+            self.executed.append(_query)
+            return None
         if not self.exec_results:
             raise AssertionError("No more exec_results left for session.exec")
         return self.exec_results.pop(0)

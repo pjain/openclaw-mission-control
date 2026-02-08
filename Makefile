@@ -101,7 +101,7 @@ frontend-test: frontend-tooling ## Frontend tests (vitest)
 	$(NODE_WRAP) --cwd $(FRONTEND_DIR) npm run test
 
 .PHONY: backend-migrate
-backend-migrate: ## Apply backend DB migrations (alembic upgrade head)
+backend-migrate: ## Apply backend DB migrations (uses backend/migrations)
 	cd $(BACKEND_DIR) && uv run alembic upgrade head
 
 .PHONY: build

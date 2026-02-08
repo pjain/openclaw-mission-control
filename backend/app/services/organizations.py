@@ -11,6 +11,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.time import utcnow
+from app.db.sqlmodel_exec import exec_dml
 from app.models.boards import Board
 from app.models.organization_board_access import OrganizationBoardAccess
 from app.models.organization_invite_board_access import OrganizationInviteBoardAccess
@@ -18,6 +19,7 @@ from app.models.organization_invites import OrganizationInvite
 from app.models.organization_members import OrganizationMember
 from app.models.organizations import Organization
 from app.models.users import User
+from app.queries import organizations as org_queries
 from app.schemas.organizations import OrganizationBoardAccessSpec, OrganizationMemberAccessUpdate
 
 DEFAULT_ORG_NAME = "Personal"
@@ -36,8 +38,7 @@ def is_org_admin(member: OrganizationMember) -> bool:
 
 
 async def get_default_org(session: AsyncSession) -> Organization | None:
-    statement = select(Organization).where(col(Organization.name) == DEFAULT_ORG_NAME)
-    return (await session.exec(statement)).first()
+    return await org_queries.organization_by_name(DEFAULT_ORG_NAME).first(session)
 
 
 async def ensure_default_org(session: AsyncSession) -> Organization:
@@ -57,20 +58,14 @@ async def get_member(
     user_id: UUID,
     organization_id: UUID,
 ) -> OrganizationMember | None:
-    statement = select(OrganizationMember).where(
-        col(OrganizationMember.organization_id) == organization_id,
-        col(OrganizationMember.user_id) == user_id,
-    )
-    return (await session.exec(statement)).first()
+    return await org_queries.member_by_user_and_org(
+        user_id=user_id,
+        organization_id=organization_id,
+    ).first(session)
 
 
 async def get_first_membership(session: AsyncSession, user_id: UUID) -> OrganizationMember | None:
-    statement = (
-        select(OrganizationMember)
-        .where(col(OrganizationMember.user_id) == user_id)
-        .order_by(col(OrganizationMember.created_at).asc())
-    )
-    return (await session.exec(statement)).first()
+    return await org_queries.first_membership_for_user(user_id).first(session)
 
 
 async def set_active_organization(
@@ -124,13 +119,7 @@ async def _find_pending_invite(
     session: AsyncSession,
     email: str,
 ) -> OrganizationInvite | None:
-    statement = (
-        select(OrganizationInvite)
-        .where(col(OrganizationInvite.accepted_at).is_(None))
-        .where(col(OrganizationInvite.invited_email) == email)
-        .order_by(col(OrganizationInvite.created_at).asc())
-    )
-    return (await session.exec(statement)).first()
+    return await org_queries.pending_invite_by_email(email).first(session)
 
 
 async def accept_invite(
@@ -241,11 +230,10 @@ async def has_board_access(
     else:
         if member_all_boards_read(member):
             return True
-    statement = select(OrganizationBoardAccess).where(
-        col(OrganizationBoardAccess.organization_member_id) == member.id,
-        col(OrganizationBoardAccess.board_id) == board.id,
-    )
-    access = (await session.exec(statement)).first()
+    access = await org_queries.board_access_for_member_and_board(
+        organization_member_id=member.id,
+        board_id=board.id,
+    ).first(session)
     if access is None:
         return False
     if write:
@@ -330,7 +318,8 @@ async def apply_member_access_update(
     member.updated_at = now
     session.add(member)
 
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationBoardAccess).where(
             col(OrganizationBoardAccess.organization_member_id) == member.id
         ),
@@ -360,7 +349,8 @@ async def apply_invite_board_access(
     invite: OrganizationInvite,
     entries: Iterable[OrganizationBoardAccessSpec],
 ) -> None:
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationInviteBoardAccess).where(
             col(OrganizationInviteBoardAccess.organization_invite_id) == invite.id
         ),

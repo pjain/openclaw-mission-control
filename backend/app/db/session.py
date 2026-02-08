@@ -5,12 +5,12 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import anyio
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from alembic import command
-from alembic.config import Config
 from app import models  # noqa: F401
 from app.core.config import settings
 
@@ -51,12 +51,12 @@ def run_migrations() -> None:
 
 async def init_db() -> None:
     if settings.db_auto_migrate:
-        versions_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+        versions_dir = Path(__file__).resolve().parents[2] / "migrations" / "versions"
         if any(versions_dir.glob("*.py")):
-            logger.info("Running Alembic migrations on startup")
+            logger.info("Running migrations on startup")
             await anyio.to_thread.run_sync(run_migrations)
             return
-        logger.warning("No Alembic revisions found; falling back to create_all")
+        logger.warning("No migration revisions found; falling back to create_all")
 
     async with async_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)

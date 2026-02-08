@@ -34,7 +34,7 @@ COPY --from=deps /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy app source
-COPY backend/alembic ./alembic
+COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/app ./app
 

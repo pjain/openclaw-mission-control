@@ -10,10 +10,13 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.deps import require_org_admin, require_org_member
+from app.api.queryset import api_qs
 from app.core.auth import AuthContext, get_auth_context
 from app.core.time import utcnow
+from app.db import crud
 from app.db.pagination import paginate
 from app.db.session import get_session
+from app.db.sqlmodel_exec import exec_dml
 from app.models.activity_events import ActivityEvent
 from app.models.agents import Agent
 from app.models.approvals import Approval
@@ -70,6 +73,38 @@ def _member_to_read(member: OrganizationMember, user: User | None) -> Organizati
     if user is not None:
         model.user = OrganizationUserRead.model_validate(user, from_attributes=True)
     return model
+
+
+async def _require_org_member(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    member_id: UUID,
+) -> OrganizationMember:
+    return await (
+        api_qs(OrganizationMember)
+        .filter(
+            col(OrganizationMember.id) == member_id,
+            col(OrganizationMember.organization_id) == organization_id,
+        )
+        .first_or_404(session)
+    )
+
+
+async def _require_org_invite(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    invite_id: UUID,
+) -> OrganizationInvite:
+    return await (
+        api_qs(OrganizationInvite)
+        .filter(
+            col(OrganizationInvite.id) == invite_id,
+            col(OrganizationInvite.organization_id) == organization_id,
+        )
+        .first_or_404(session)
+    )
 
 
 @router.post("", response_model=OrganizationRead)
@@ -188,55 +223,67 @@ async def delete_my_org(
     )
     group_ids = select(BoardGroup.id).where(col(BoardGroup.organization_id) == org_id)
 
-    await session.execute(delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids)))
-    await session.execute(delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids)))
-    await session.execute(delete(TaskDependency).where(col(TaskDependency.board_id).in_(board_ids)))
-    await session.execute(
-        delete(TaskFingerprint).where(col(TaskFingerprint.board_id).in_(board_ids))
+    await exec_dml(session, delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids)))
+    await exec_dml(session, delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids)))
+    await exec_dml(
+        session, delete(TaskDependency).where(col(TaskDependency.board_id).in_(board_ids))
     )
-    await session.execute(delete(Approval).where(col(Approval.board_id).in_(board_ids)))
-    await session.execute(delete(BoardMemory).where(col(BoardMemory.board_id).in_(board_ids)))
-    await session.execute(
-        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id).in_(board_ids))
+    await exec_dml(
+        session,
+        delete(TaskFingerprint).where(col(TaskFingerprint.board_id).in_(board_ids)),
     )
-    await session.execute(
-        delete(OrganizationBoardAccess).where(col(OrganizationBoardAccess.board_id).in_(board_ids))
+    await exec_dml(session, delete(Approval).where(col(Approval.board_id).in_(board_ids)))
+    await exec_dml(session, delete(BoardMemory).where(col(BoardMemory.board_id).in_(board_ids)))
+    await exec_dml(
+        session,
+        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id).in_(board_ids)),
     )
-    await session.execute(
+    await exec_dml(
+        session,
+        delete(OrganizationBoardAccess).where(col(OrganizationBoardAccess.board_id).in_(board_ids)),
+    )
+    await exec_dml(
+        session,
         delete(OrganizationInviteBoardAccess).where(
             col(OrganizationInviteBoardAccess.board_id).in_(board_ids)
-        )
+        ),
     )
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationBoardAccess).where(
             col(OrganizationBoardAccess.organization_member_id).in_(member_ids)
-        )
+        ),
     )
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationInviteBoardAccess).where(
             col(OrganizationInviteBoardAccess.organization_invite_id).in_(invite_ids)
-        )
+        ),
     )
-    await session.execute(delete(Task).where(col(Task.board_id).in_(board_ids)))
-    await session.execute(delete(Agent).where(col(Agent.board_id).in_(board_ids)))
-    await session.execute(delete(Board).where(col(Board.organization_id) == org_id))
-    await session.execute(
-        delete(BoardGroupMemory).where(col(BoardGroupMemory.board_group_id).in_(group_ids))
+    await exec_dml(session, delete(Task).where(col(Task.board_id).in_(board_ids)))
+    await exec_dml(session, delete(Agent).where(col(Agent.board_id).in_(board_ids)))
+    await exec_dml(session, delete(Board).where(col(Board.organization_id) == org_id))
+    await exec_dml(
+        session,
+        delete(BoardGroupMemory).where(col(BoardGroupMemory.board_group_id).in_(group_ids)),
     )
-    await session.execute(delete(BoardGroup).where(col(BoardGroup.organization_id) == org_id))
-    await session.execute(delete(Gateway).where(col(Gateway.organization_id) == org_id))
-    await session.execute(
-        delete(OrganizationInvite).where(col(OrganizationInvite.organization_id) == org_id)
+    await exec_dml(session, delete(BoardGroup).where(col(BoardGroup.organization_id) == org_id))
+    await exec_dml(session, delete(Gateway).where(col(Gateway.organization_id) == org_id))
+    await exec_dml(
+        session,
+        delete(OrganizationInvite).where(col(OrganizationInvite.organization_id) == org_id),
     )
-    await session.execute(
-        delete(OrganizationMember).where(col(OrganizationMember.organization_id) == org_id)
+    await exec_dml(
+        session,
+        delete(OrganizationMember).where(col(OrganizationMember.organization_id) == org_id),
     )
-    await session.execute(
+    await exec_dml(
+        session,
         update(User)
         .where(col(User.active_organization_id) == org_id)
-        .values(active_organization_id=None)
+        .values(active_organization_id=None),
     )
-    await session.execute(delete(Organization).where(col(Organization.id) == org_id))
+    await exec_dml(session, delete(Organization).where(col(Organization.id) == org_id))
     await session.commit()
     return OkResponse()
 
@@ -288,9 +335,11 @@ async def get_org_member(
     session: AsyncSession = Depends(get_session),
     ctx: OrganizationContext = Depends(require_org_member),
 ) -> OrganizationMemberRead:
-    member = await session.get(OrganizationMember, member_id)
-    if member is None or member.organization_id != ctx.organization.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    member = await _require_org_member(
+        session,
+        organization_id=ctx.organization.id,
+        member_id=member_id,
+    )
     if not is_org_admin(ctx.member) and member.user_id != ctx.member.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     user = await session.get(User, member.user_id)
@@ -315,16 +364,16 @@ async def update_org_member(
     session: AsyncSession = Depends(get_session),
     ctx: OrganizationContext = Depends(require_org_admin),
 ) -> OrganizationMemberRead:
-    member = await session.get(OrganizationMember, member_id)
-    if member is None or member.organization_id != ctx.organization.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    member = await _require_org_member(
+        session,
+        organization_id=ctx.organization.id,
+        member_id=member_id,
+    )
     updates = payload.model_dump(exclude_unset=True)
     if "role" in updates and updates["role"] is not None:
-        member.role = normalize_role(updates["role"])
-    member.updated_at = utcnow()
-    session.add(member)
-    await session.commit()
-    await session.refresh(member)
+        updates["role"] = normalize_role(updates["role"])
+    updates["updated_at"] = utcnow()
+    member = await crud.patch(session, member, updates)
     user = await session.get(User, member.user_id)
     return _member_to_read(member, user)
 
@@ -336,9 +385,11 @@ async def update_member_access(
     session: AsyncSession = Depends(get_session),
     ctx: OrganizationContext = Depends(require_org_admin),
 ) -> OrganizationMemberRead:
-    member = await session.get(OrganizationMember, member_id)
-    if member is None or member.organization_id != ctx.organization.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    member = await _require_org_member(
+        session,
+        organization_id=ctx.organization.id,
+        member_id=member_id,
+    )
 
     board_ids = {entry.board_id for entry in payload.board_access}
     if board_ids:
@@ -393,10 +444,11 @@ async def remove_org_member(
                 detail="Organization must have at least one owner",
             )
 
-    await session.execute(
+    await exec_dml(
+        session,
         delete(OrganizationBoardAccess).where(
             col(OrganizationBoardAccess.organization_member_id) == member.id
-        )
+        ),
     )
 
     user = await session.get(User, member.user_id)
@@ -412,8 +464,7 @@ async def remove_org_member(
         user.active_organization_id = fallback_org_id
         session.add(user)
 
-    await session.delete(member)
-    await session.commit()
+    await crud.delete(session, member)
     return OkResponse()
 
 
@@ -423,10 +474,11 @@ async def list_org_invites(
     ctx: OrganizationContext = Depends(require_org_admin),
 ) -> DefaultLimitOffsetPage[OrganizationInviteRead]:
     statement = (
-        select(OrganizationInvite)
-        .where(col(OrganizationInvite.organization_id) == ctx.organization.id)
-        .where(col(OrganizationInvite.accepted_at).is_(None))
+        api_qs(OrganizationInvite)
+        .filter(col(OrganizationInvite.organization_id) == ctx.organization.id)
+        .filter(col(OrganizationInvite.accepted_at).is_(None))
         .order_by(col(OrganizationInvite.created_at).desc())
+        .statement
     )
     return await paginate(session, statement)
 
@@ -491,16 +543,18 @@ async def revoke_org_invite(
     session: AsyncSession = Depends(get_session),
     ctx: OrganizationContext = Depends(require_org_admin),
 ) -> OrganizationInviteRead:
-    invite = await session.get(OrganizationInvite, invite_id)
-    if invite is None or invite.organization_id != ctx.organization.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await session.execute(
+    invite = await _require_org_invite(
+        session,
+        organization_id=ctx.organization.id,
+        invite_id=invite_id,
+    )
+    await exec_dml(
+        session,
         delete(OrganizationInviteBoardAccess).where(
             col(OrganizationInviteBoardAccess.organization_invite_id) == invite.id
         ),
     )
-    await session.delete(invite)
-    await session.commit()
+    await crud.delete(session, invite)
     return OrganizationInviteRead.model_validate(invite, from_attributes=True)
 
 

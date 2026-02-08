@@ -14,6 +14,7 @@ from app.core.time import utcnow
 from app.db import crud
 from app.db.pagination import paginate
 from app.db.session import get_session
+from app.db.sqlmodel_exec import exec_dml
 from app.models.agents import Agent
 from app.models.board_group_memory import BoardGroupMemory
 from app.models.board_groups import BoardGroup
@@ -262,10 +263,8 @@ async def update_board_group(
     updates = payload.model_dump(exclude_unset=True)
     if "slug" in updates and updates["slug"] is not None and not updates["slug"].strip():
         updates["slug"] = _slugify(updates.get("name") or group.name)
-    for key, value in updates.items():
-        setattr(group, key, value)
-    group.updated_at = utcnow()
-    return await crud.save(session, group)
+    updates["updated_at"] = utcnow()
+    return await crud.patch(session, group, updates)
 
 
 @router.delete("/{group_id}", response_model=OkResponse)
@@ -277,12 +276,14 @@ async def delete_board_group(
     await _require_group_access(session, group_id=group_id, member=ctx.member, write=True)
 
     # Boards reference groups, so clear the FK first to keep deletes simple.
-    await session.execute(
-        update(Board).where(col(Board.board_group_id) == group_id).values(board_group_id=None)
+    await exec_dml(
+        session,
+        update(Board).where(col(Board.board_group_id) == group_id).values(board_group_id=None),
     )
-    await session.execute(
-        delete(BoardGroupMemory).where(col(BoardGroupMemory.board_group_id) == group_id)
+    await exec_dml(
+        session,
+        delete(BoardGroupMemory).where(col(BoardGroupMemory.board_group_id) == group_id),
     )
-    await session.execute(delete(BoardGroup).where(col(BoardGroup.id) == group_id))
+    await exec_dml(session, delete(BoardGroup).where(col(BoardGroup.id) == group_id))
     await session.commit()
     return OkResponse()

@@ -49,7 +49,7 @@ flowchart LR
 ### Data stores
 - **Postgres**: persistence for boards/tasks/agents/approvals/etc.
   - Models: `backend/app/models/*`
-  - Migrations: `backend/alembic/*`
+  - Migrations: `backend/migrations/*`
 - **Redis**: used for background primitives.
   - RQ helper: `backend/app/workers/queue.py`
 

@@ -21,6 +21,7 @@ from app.core.auth import AuthContext, get_auth_context
 from app.core.time import utcnow
 from app.db.pagination import paginate
 from app.db.session import async_session_maker, get_session
+from app.db.sqlmodel_exec import exec_dml
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
 from app.integrations.openclaw_gateway import OpenClawGatewayError, ensure_session, send_message
 from app.models.activity_events import ActivityEvent
@@ -973,7 +974,8 @@ async def delete_agent(
         agent_id=None,
     )
     now = datetime.now()
-    await session.execute(
+    await exec_dml(
+        session,
         update(Task)
         .where(col(Task.assigned_agent_id) == agent.id)
         .where(col(Task.status) == "in_progress")
@@ -982,19 +984,21 @@ async def delete_agent(
             status="inbox",
             in_progress_at=None,
             updated_at=now,
-        )
+        ),
     )
-    await session.execute(
+    await exec_dml(
+        session,
         update(Task)
         .where(col(Task.assigned_agent_id) == agent.id)
         .where(col(Task.status) != "in_progress")
         .values(
             assigned_agent_id=None,
             updated_at=now,
-        )
+        ),
     )
-    await session.execute(
-        update(ActivityEvent).where(col(ActivityEvent.agent_id) == agent.id).values(agent_id=None)
+    await exec_dml(
+        session,
+        update(ActivityEvent).where(col(ActivityEvent.agent_id) == agent.id).values(agent_id=None),
     )
     await session.delete(agent)
     await session.commit()

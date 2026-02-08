@@ -1,12 +1,12 @@
 [tool.black]
 line-length = 100
 target-version = ["py312"]
-extend-exclude = '(\.venv|alembic/versions)'
+extend-exclude = '(\.venv|migrations/versions)'
 
 [tool.isort]
 profile = "black"
 line_length = 100
-skip = [".venv", "alembic/versions"]
+skip = [".venv", "migrations/versions"]
 [project]
 name = "openclaw-agency-backend"
 version = "0.1.0"
@@ -59,7 +59,7 @@ asyncio_default_fixture_loop_scope = "function"
 branch = true
 source = ["app"]
 # Migrations are generated artifacts; testing them doesn't add coverage signal.
-omit = ["alembic/versions/*"]
+omit = ["migrations/versions/*"]
 
 [tool.coverage.report]
 show_missing = true

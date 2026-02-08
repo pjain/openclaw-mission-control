@@ -77,7 +77,7 @@ Clerk is used for user authentication (optional for local/self-host in many setu
 
 ## Database migrations (Alembic)
 
-Migrations live in `backend/alembic/versions/*`.
+Migrations live in `backend/migrations/versions/*`.
 
 Common commands:
 
