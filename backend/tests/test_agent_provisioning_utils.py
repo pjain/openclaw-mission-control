@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import app.services.openclaw.provisioning as agent_provisioning
+from app.services.openclaw.agent_service import AgentLifecycleService
 from app.services.openclaw.shared import GatewayAgentIdentity
 
 
@@ -64,6 +65,20 @@ def test_agent_key_uses_session_key_when_present(monkeypatch):
     monkeypatch.setattr(agent_provisioning, "_slugify", lambda value: "slugged")
     agent2 = _AgentStub(name="Alice", openclaw_session_id=None)
     assert agent_provisioning._agent_key(agent2) == "slugged"
+
+def test_workspace_path_preserves_tilde_in_workspace_root():
+    # Mission Control accepts a user-entered workspace root (from the UI) and must
+    # treat it as an opaque string. In particular, we must not expand "~" to a
+    # filesystem path since that behavior depends on the host environment.
+    agent = _AgentStub(name="Alice", openclaw_session_id="agent:alice:main")
+    assert agent_provisioning._workspace_path(agent, "~/.openclaw") == "~/.openclaw/workspace-alice"
+
+
+def test_agent_lifecycle_workspace_path_preserves_tilde_in_workspace_root():
+    assert (
+        AgentLifecycleService.workspace_path("Alice", "~/.openclaw")
+        == "~/.openclaw/workspace-alice"
+    )
 
 
 @dataclass

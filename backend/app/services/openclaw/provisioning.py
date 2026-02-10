@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import re
 from abc import ABC, abstractmethod
@@ -213,40 +212,6 @@ def _workspace_path(agent: Agent, workspace_root: str) -> str:
     # display name (e.g. "Lead Agent").
     key = _agent_key(agent)
     return f"{root}/workspace-{_slugify(key)}"
-
-
-def _ensure_workspace_file(
-    workspace_path: str,
-    name: str,
-    content: str,
-    *,
-    overwrite: bool = False,
-) -> None:
-    if not workspace_path or not name:
-        return
-    # Only write to a dedicated, explicitly-configured local directory.
-    # Using `gateway.workspace_root` directly here is unsafe.
-    # CodeQL correctly flags that value because it is DB-backed config.
-    base_root = (settings.local_agent_workspace_root or "").strip()
-    if not base_root:
-        return
-    base = Path(base_root).expanduser()
-
-    # Derive a stable, safe directory name from the untrusted workspace path.
-    # This prevents path traversal and avoids writing to arbitrary locations.
-    digest = hashlib.sha256(workspace_path.encode("utf-8")).hexdigest()[:16]
-    root = base / f"gateway-workspace-{digest}"
-
-    # Ensure `name` is a plain filename (no path separators).
-    if Path(name).name != name:
-        return
-    path = root / name
-    if not overwrite and path.exists():
-        return
-    root.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    tmp_path.replace(path)
 
 
 def _build_context(
@@ -794,13 +759,6 @@ class BaseAgentLifecycleManager(ABC):
             include_bootstrap=include_bootstrap,
             template_overrides=self._template_overrides(),
         )
-
-        for name in PRESERVE_AGENT_EDITABLE_FILES:
-            content = rendered.get(name)
-            if not content:
-                continue
-            with suppress(OSError):
-                _ensure_workspace_file(workspace_path, name, content, overwrite=False)
 
         await self._set_agent_files(
             agent_id=agent_id,

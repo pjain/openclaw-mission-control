@@ -35,13 +35,6 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     base_url: str = ""
 
-    # Optional: local directory where the backend is allowed to write "preserved" agent
-    # workspace files (e.g. USER.md/SELF.md/MEMORY.md). If empty, local
-    # writes are disabled and provisioning relies on the gateway API.
-    #
-    # Security note: do NOT point this at arbitrary system paths in production.
-    local_agent_workspace_root: str = ""
-
     # Database lifecycle
     db_auto_migrate: bool = False
 
