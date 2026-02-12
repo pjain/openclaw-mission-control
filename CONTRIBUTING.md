@@ -25,6 +25,20 @@ When opening an issue, please include:
 
 ## Pull requests
 
+### Branching hygiene (required)
+
+Create feature branches from the latest `origin/master` to avoid unrelated commits in PRs:
+
+```bash
+git fetch origin
+git checkout master
+git reset --hard origin/master
+git checkout -b <branch-name>
+```
+
+If you accidentally based your branch off another feature branch, fix it by cherry-picking the intended commits onto a clean branch and force-pushing the corrected branch (or opening a new PR).
+
+
 ### Expectations
 
 - Keep PRs **small and focused** when possible.
