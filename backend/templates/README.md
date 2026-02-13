@@ -16,6 +16,7 @@ Use these templates to control what an agent sees in workspace files like:
 - `IDENTITY.md`
 - `USER.md`
 - `MEMORY.md`
+- `LEAD_PLAYBOOK.md` (supplemental lead examples/reference)
 
 When a gateway template sync runs, these templates are rendered with agent/board context and written into each workspace.
 
@@ -103,6 +104,25 @@ See:
 - `board_goal_confirmed`, `is_board_lead`
 - `workspace_path`
 
+## OpenAPI role tags for agents
+
+Agent-facing endpoints expose role tags in OpenAPI so heartbeat files can filter
+operations without path regex hacks:
+
+- `agent-lead`: board lead workflows (delegation/review/coordination)
+- `agent-worker`: non-lead board execution workflows
+- `agent-main`: gateway main / cross-board control-plane workflows
+
+Example filter:
+
+```bash
+curl -s "$BASE_URL/openapi.json" \
+  | jq -r '.paths | to_entries[] | .key as $path
+    | .value | to_entries[]
+    | select((.value.tags // []) | index("agent-lead"))
+    | "\(.key|ascii_upcase)\t\($path)\t\(.value.operationId // "-")"'
+```
+
 ## Safe change checklist
 
 Before merging template changes:
@@ -112,6 +132,7 @@ Before merging template changes:
 3. Review both board-agent and `MAIN_*` templates when changing shared behavior.
 4. Preserve agent-editable files behavior (`PRESERVE_AGENT_EDITABLE_FILES`).
 5. Run docs quality checks and CI.
+6. Keep heartbeat templates under injected-context size limits (20,000 chars each).
 
 ## Local validation
 

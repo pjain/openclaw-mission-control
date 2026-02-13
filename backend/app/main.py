@@ -38,6 +38,36 @@ if TYPE_CHECKING:
 
 configure_logging()
 logger = get_logger(__name__)
+OPENAPI_TAGS = [
+    {
+        "name": "agent",
+        "description": (
+            "Agent-scoped API surface. All endpoints require `X-Agent-Token` and are "
+            "constrained by agent board access policies."
+        ),
+    },
+    {
+        "name": "agent-lead",
+        "description": (
+            "Lead workflows: delegation, review orchestration, approvals, and "
+            "coordination actions."
+        ),
+    },
+    {
+        "name": "agent-worker",
+        "description": (
+            "Worker workflows: task execution, task comments, and board/group context "
+            "reads/writes used during heartbeat loops."
+        ),
+    },
+    {
+        "name": "agent-main",
+        "description": (
+            "Gateway-main control workflows that message board leads or broadcast "
+            "coordination requests."
+        ),
+    },
+]
 
 
 @asynccontextmanager
@@ -56,7 +86,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("app.lifecycle.stopped")
 
 
-app = FastAPI(title="Mission Control API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Mission Control API",
+    version="0.1.0",
+    lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
+)
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 if origins:
