@@ -47,6 +47,14 @@ Core operational areas:
 
 ### Option A: One-command production-style bootstrap
 
+If you haven't cloned the repo yet, you can run the installer in one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abhi1693/openclaw-mission-control/master/install.sh | bash
+```
+
+If you already cloned the repo:
+
 ```bash
 ./install.sh
 ```
