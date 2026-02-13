@@ -446,6 +446,12 @@ ensure_nodejs() {
     die "Node.js/npm installation failed."
   fi
 
+  # Refresh command lookup + PATH after install (CI runners often have an older Node in PATH).
+  hash -r || true
+  if [[ -x /usr/bin/node ]]; then
+    export PATH="/usr/bin:$PATH"
+  fi
+
   node_version="$(node -v || true)"
   node_major="${node_version#v}"
   node_major="${node_major%%.*}"
