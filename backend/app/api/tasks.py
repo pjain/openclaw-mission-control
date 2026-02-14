@@ -1405,6 +1405,7 @@ async def update_task(
         board_id=board_id,
         previous_status=previous_status,
         previous_assigned=previous_assigned,
+        previous_in_progress_at=task.in_progress_at,
         status_requested=(requested_status is not None and requested_status != previous_status),
         updates=updates,
         comment=comment,
@@ -1669,6 +1670,7 @@ class _TaskUpdateInput:
     tag_ids: list[UUID] | None
     custom_field_values: TaskCustomFieldValues
     custom_field_values_set: bool
+    previous_in_progress_at: datetime | None = None
     normalized_tag_ids: list[UUID] | None = None
 
 
@@ -2136,6 +2138,9 @@ async def _apply_non_lead_agent_task_rules(
         if status_value == "inbox":
             update.task.assigned_agent_id = None
             update.task.in_progress_at = None
+        elif status_value == "review":
+            update.task.assigned_agent_id = None
+            update.task.in_progress_at = None
         else:
             update.task.assigned_agent_id = update.actor.agent.id if update.actor.agent else None
             if status_value == "in_progress":
@@ -2346,11 +2351,17 @@ async def _finalize_updated_task(
     # ensure reviewers get context on readiness.
     if status_raw == "review":
         comment_text = (update.comment or "").strip()
+        review_comment_author = update.task.assigned_agent_id or update.previous_assigned
+        review_comment_since = (
+            update.task.in_progress_at
+            if update.task.in_progress_at is not None
+            else update.previous_in_progress_at
+        )
         if not comment_text and not await has_valid_recent_comment(
             session,
             update.task,
-            update.task.assigned_agent_id,
-            update.task.in_progress_at,
+            review_comment_author,
+            review_comment_since,
         ):
             raise _comment_validation_error()
 

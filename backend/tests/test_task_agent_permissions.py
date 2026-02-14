@@ -10,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api import tasks as tasks_api
 from app.api.deps import ActorContext
+from app.core.time import utcnow
 from app.models.agents import Agent
 from app.models.boards import Board
 from app.models.gateways import Gateway
@@ -325,5 +326,228 @@ async def test_non_lead_agent_forbidden_for_lead_only_patch_fields() -> None:
             assert exc.value.status_code == 403
             assert isinstance(exc.value.detail, dict)
             assert exc.value.detail["code"] == "task_update_field_forbidden"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_non_lead_agent_moves_task_to_review_and_task_unassigns() -> None:
+    engine = await _make_engine()
+    try:
+        async with await _make_session(engine) as session:
+            org_id = uuid4()
+            board_id = uuid4()
+            gateway_id = uuid4()
+            worker_id = uuid4()
+            task_id = uuid4()
+
+            session.add(Organization(id=org_id, name="org"))
+            session.add(
+                Gateway(
+                    id=gateway_id,
+                    organization_id=org_id,
+                    name="gateway",
+                    url="https://gateway.local",
+                    workspace_root="/tmp/workspace",
+                ),
+            )
+            session.add(
+                Board(
+                    id=board_id,
+                    organization_id=org_id,
+                    name="board",
+                    slug="board",
+                    gateway_id=gateway_id,
+                ),
+            )
+            session.add(
+                Agent(
+                    id=worker_id,
+                    name="worker",
+                    board_id=board_id,
+                    gateway_id=gateway_id,
+                    status="online",
+                ),
+            )
+            session.add(
+                Task(
+                    id=task_id,
+                    board_id=board_id,
+                    title="assigned task",
+                    description="",
+                    status="in_progress",
+                    assigned_agent_id=worker_id,
+                    in_progress_at=utcnow(),
+                ),
+            )
+            await session.commit()
+
+            task = (await session.exec(select(Task).where(col(Task.id) == task_id))).first()
+            assert task is not None
+            actor = (await session.exec(select(Agent).where(col(Agent.id) == worker_id))).first()
+            assert actor is not None
+
+            updated = await tasks_api.update_task(
+                payload=TaskUpdate(status="review", comment="Moving to review."),
+                task=task,
+                session=session,
+                actor=ActorContext(actor_type="agent", agent=actor),
+            )
+
+            assert updated.status == "review"
+            assert updated.assigned_agent_id is None
+            assert updated.in_progress_at is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_non_lead_agent_comment_in_review_without_status_does_not_reassign() -> None:
+    engine = await _make_engine()
+    try:
+        async with await _make_session(engine) as session:
+            org_id = uuid4()
+            board_id = uuid4()
+            gateway_id = uuid4()
+            assignee_id = uuid4()
+            commentator_id = uuid4()
+            task_id = uuid4()
+
+            session.add(Organization(id=org_id, name="org"))
+            session.add(
+                Gateway(
+                    id=gateway_id,
+                    organization_id=org_id,
+                    name="gateway",
+                    url="https://gateway.local",
+                    workspace_root="/tmp/workspace",
+                ),
+            )
+            session.add(
+                Board(
+                    id=board_id,
+                    organization_id=org_id,
+                    name="board",
+                    slug="board",
+                    gateway_id=gateway_id,
+                ),
+            )
+            session.add(
+                Agent(
+                    id=assignee_id,
+                    name="assignee",
+                    board_id=board_id,
+                    gateway_id=gateway_id,
+                    status="online",
+                ),
+            )
+            session.add(
+                Agent(
+                    id=commentator_id,
+                    name="commentator",
+                    board_id=board_id,
+                    gateway_id=gateway_id,
+                    status="online",
+                ),
+            )
+            session.add(
+                Task(
+                    id=task_id,
+                    board_id=board_id,
+                    title="review task",
+                    description="",
+                    status="review",
+                    assigned_agent_id=None,
+                ),
+            )
+            await session.commit()
+
+            task = (await session.exec(select(Task).where(col(Task.id) == task_id))).first()
+            assert task is not None
+            commentator = (
+                await session.exec(select(Agent).where(col(Agent.id) == commentator_id))
+            ).first()
+            assert commentator is not None
+
+            updated = await tasks_api.update_task(
+                payload=TaskUpdate(comment="I can help with this."),
+                task=task,
+                session=session,
+                actor=ActorContext(actor_type="agent", actor=commentator),
+            )
+
+            assert updated.status == "review"
+            assert updated.assigned_agent_id is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_non_lead_agent_moves_to_review_without_comment_or_recent_comment_fails() -> None:
+    engine = await _make_engine()
+    try:
+        async with await _make_session(engine) as session:
+            org_id = uuid4()
+            board_id = uuid4()
+            gateway_id = uuid4()
+            worker_id = uuid4()
+            task_id = uuid4()
+
+            session.add(Organization(id=org_id, name="org"))
+            session.add(
+                Gateway(
+                    id=gateway_id,
+                    organization_id=org_id,
+                    name="gateway",
+                    url="https://gateway.local",
+                    workspace_root="/tmp/workspace",
+                ),
+            )
+            session.add(
+                Board(
+                    id=board_id,
+                    organization_id=org_id,
+                    name="board",
+                    slug="board",
+                    gateway_id=gateway_id,
+                ),
+            )
+            session.add(
+                Agent(
+                    id=worker_id,
+                    name="worker",
+                    board_id=board_id,
+                    gateway_id=gateway_id,
+                    status="online",
+                ),
+            )
+            session.add(
+                Task(
+                    id=task_id,
+                    board_id=board_id,
+                    title="assigned task",
+                    description="",
+                    status="in_progress",
+                    assigned_agent_id=worker_id,
+                    in_progress_at=utcnow(),
+                ),
+            )
+            await session.commit()
+
+            task = (await session.exec(select(Task).where(col(Task.id) == task_id))).first()
+            assert task is not None
+            actor = (await session.exec(select(Agent).where(col(Agent.id) == worker_id))).first()
+            assert actor is not None
+
+            with pytest.raises(HTTPException) as exc:
+                await tasks_api.update_task(
+                    payload=TaskUpdate(status="review"),
+                    task=task,
+                    session=session,
+                    actor=ActorContext(actor_type="agent", agent=actor),
+                )
+
+            assert exc.value.status_code == 422
+            assert exc.value.detail == "Comment is required."
     finally:
         await engine.dispose()
