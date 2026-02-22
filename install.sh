@@ -218,19 +218,23 @@ install_command_hint() {
 detect_platform() {
   local uname_s
   uname_s="$(uname -s)"
-  if [[ "$uname_s" != "Linux" ]]; then
-    die "Unsupported platform: $uname_s. Linux is required."
+  if [[ "$uname_s" != "Darwin" && "$uname_s" != "Linux" ]]; then
+    die "Unsupported platform: $uname_s. macOS or Linux are required."
+  #elif [[ "$uname_s" != "Linux" ]]; then
+  #  die "Unsupported platform: $uname_s. Linux is required."
   fi
 
-  if [[ ! -r /etc/os-release ]]; then
+  if [[ "$uname_s" == "Linux" && ! -r /etc/os-release ]]; then
     die "Cannot detect Linux distribution (/etc/os-release missing)."
   fi
 
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  LINUX_DISTRO="${ID:-unknown}"
-  # ID_LIKE is available via /etc/os-release when we need it for future detection heuristics.
-
+  if [[ "$uname_s" == "Linux" ]]; then
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      LINUX_DISTRO="${ID:-unknown}"
+      # ID_LIKE is available via /etc/os-release when we need it for future detection heuristics.
+  fi
+      
   if command_exists apt-get; then
     PKG_MANAGER="apt"
   elif command_exists dnf; then
@@ -241,6 +245,8 @@ detect_platform() {
     PKG_MANAGER="zypper"
   elif command_exists pacman; then
     PKG_MANAGER="pacman"
+  elif command_exists brew; then
+      PKG_MANAGER="brew"
   else
     die "Unsupported Linux distribution: $LINUX_DISTRO. No supported package manager detected (expected apt/dnf/yum/zypper/pacman)."
   fi
